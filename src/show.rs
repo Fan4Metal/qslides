@@ -217,12 +217,20 @@ impl Playlist {
         }
     }
 
+    /// Nothing to show: the library has no files, or none of them could be
+    /// shown.
     pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
+        self.sequence.is_empty()
     }
 
+    /// The files in the show (those that could not be shown left out).
     pub fn len(&self) -> usize {
-        self.items.len()
+        self.sequence.len()
+    }
+
+    /// The library has files, but none of them could be shown.
+    pub fn all_failed(&self) -> bool {
+        !self.items.is_empty() && self.sequence.is_empty()
     }
 
     /// The place of the current file in the show, from 1, and the number of
@@ -448,8 +456,16 @@ mod tests {
         p.set_items(items(), Some(Path::new(r"C:\p\c.mp4")));
         p.remove_current();
         assert_eq!(name(&p), "a.jpg");
-        assert_eq!(p.sequence.len(), 3);
+        assert_eq!(p.len(), 3);
+        assert!(!p.all_failed());
+        // None of them could be shown: empty, though the library is not.
+        for _ in 0..3 {
+            p.remove_current();
+        }
+        assert!(p.is_empty() && p.all_failed());
+        assert!(p.current().is_none() && p.peek_next().is_none());
         let mut empty = Playlist::new(Order::Name);
+        assert!(!empty.all_failed());
         assert!(empty.advance().is_none());
         assert!(empty.peek_next().is_none());
     }

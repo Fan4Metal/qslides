@@ -883,6 +883,11 @@ impl App {
                     "Looking for pictures and videos…",
                     "Поиск картинок и видео…"
                 )
+            } else if self.playlist.all_failed() {
+                tr!(
+                    "None of the library's files could be opened",
+                    "Не удалось открыть ни один файл библиотеки"
+                )
             } else if self.playlist.is_empty() {
                 tr!(
                     "No pictures or videos in the library's folders",

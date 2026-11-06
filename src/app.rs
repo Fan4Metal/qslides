@@ -1,8 +1,7 @@
 //! The widget: the eframe `App` showing the slideshow in a frameless
 //! window. The picture fills the window (black around it); moving the
 //! pointer over it brings up the Previous, Pause and Next buttons; the
-//! rest is in the menu of the right button and of the tray icon
-//! (`menu.rs`).
+//! rest is in the menu of the right button (`menu.rs`).
 //!
 //! The show keeps one slide on the screen (`current`) and gets the next
 //! one ready while it is up (`upcoming`): a picture decoded by the loader
@@ -717,11 +716,10 @@ impl App {
     }
 
     /// What the window's subclass queued: the tray icon, Explorer.
-    fn take_hooked(&mut self) {
+    fn take_hooked(&mut self, ctx: &egui::Context) {
         for hooked in crate::win::take_hooked() {
             match hooked {
-                crate::win::Hooked::TrayClick => {}
-                crate::win::Hooked::TrayMenu(x, y) => self.open_menu((x, y)),
+                crate::win::Hooked::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                 crate::win::Hooked::TrayCreated => {
                     if let Some(tray) = &mut self.tray {
                         tray.add();
@@ -1017,7 +1015,7 @@ impl eframe::App for App {
         let ctx = root_ui.ctx().clone();
         self.updates.poll();
         self.uncloak(&ctx);
-        self.take_hooked();
+        self.take_hooked(&ctx);
         self.take_scans();
         if !self.about.open {
             self.keys(&ctx);

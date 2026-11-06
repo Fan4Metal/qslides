@@ -387,8 +387,8 @@ pub fn adopt(hwnd: isize, owner: isize, centre: bool) {
 }
 
 /// Where a popup of `size` pixels opened at `at` goes: its top left corner
-/// at the point, or flipped left or up where it would leave `work` (the
-/// tray icon's menu opens upward from the taskbar), kept inside `work`.
+/// at the point, or flipped left or up where it would leave `work`, kept
+/// inside `work`.
 pub fn popup_rect(at: (i32, i32), size: (i32, i32), work: [i32; 4]) -> [i32; 4] {
     let (w, h) = size;
     let mut left = if at.0 + w > work[2] { at.0 - w } else { at.0 };
@@ -547,10 +547,8 @@ pub fn set_autostart(on: bool) -> Result<(), String> {
 /// ([`take_hooked`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hooked {
-    /// The tray icon clicked.
-    TrayClick,
-    /// The tray icon's menu asked for at this point of the screen.
-    TrayMenu(i32, i32),
+    /// Exit chosen in the tray icon's menu.
+    Exit,
     /// Explorer started (again): the tray icon is to be added anew.
     TrayCreated,
     /// Explorer made the window's taskbar button (again).
@@ -655,15 +653,16 @@ unsafe extern "system" fn window_proc(
         const NIN_KEYSELECT: u32 = 0x401;
         const WM_CONTEXTMENU: u32 = 0x007B;
         match lparam as u32 & 0xFFFF {
-            NIN_SELECT | NIN_KEYSELECT => {
-                // At once, without waiting for a frame.
-                bring_forward(hwnd as isize);
-                hook(Hooked::TrayClick);
-            }
+            // At once, without waiting for a frame.
+            NIN_SELECT | NIN_KEYSELECT => bring_forward(hwnd as isize),
             WM_CONTEXTMENU => {
                 let x = (wparam & 0xFFFF) as u16 as i16 as i32;
                 let y = ((wparam >> 16) & 0xFFFF) as u16 as i16 as i32;
-                hook(Hooked::TrayMenu(x, y));
+                match crate::tray::menu(hwnd as isize, x, y) {
+                    Some(crate::tray::TrayCmd::Show) => bring_forward(hwnd as isize),
+                    Some(crate::tray::TrayCmd::Exit) => hook(Hooked::Exit),
+                    None => {}
+                }
             }
             _ => {}
         }

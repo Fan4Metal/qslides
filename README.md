@@ -43,7 +43,7 @@ The executables are not code-signed, so Windows SmartScreen may warn about an un
 
 The window shows the current slide on a black background. Dragging the picture moves the window, dragging its edges and corners sizes it. When the pointer moves over the window, the **Previous**, **Pause** and **Next** buttons appear at its bottom, and a cross that closes the program at its top right corner; they fade out again after a few seconds. A double click opens the file shown in the program Windows associates with it.
 
-Everything else is in the menu of the right mouse button, which is also opened by the right button on the tray icon. The menu is a small panel in a window of its own, so it extends beyond the edges of a small widget; near the edges of the screen it opens to the left or upward. It closes on a click elsewhere or on `Esc`; the settings in it take effect at once and leave it open.
+Everything else is in the menu of the right mouse button. A click on the tray icon brings the widget in front of other windows; the right button on the tray icon opens a short system menu: **qslides** does the same, **Exit** closes the program. The widget's menu is a small panel in a window of its own, so it extends beyond the edges of a small widget; near the edges of the screen it opens to the left or upward. It closes on a click elsewhere or on `Esc`; the settings in it take effect at once and leave it open.
 
 | Part | What it does |
 |---|---|

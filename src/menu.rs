@@ -4,7 +4,7 @@
 //! layer inside its window and would be cut by the edges of a small widget,
 //! a window of its own opens beyond them. It opens at the pointer, flipped
 //! left or up near the edges of the screen (`win::place_popup`), on a right
-//! click on the widget and on the tray icon, and closes when it loses the
+//! click on the widget, and closes when it loses the
 //! focus, on Esc and after a command that leads elsewhere.
 //!
 //! It is a panel rather than a list of submenus: the controls of the show

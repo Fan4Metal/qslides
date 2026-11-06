@@ -9,6 +9,26 @@ pub mod icons;
 pub mod start;
 
 use egui::{Color32, Pos2, Response, Sense, TextureHandle, TextureOptions, Ui};
+
+/// A button with icon (icons::SIZE points) in the button's text colour.
+pub fn icon_button(ui: &mut Ui, icon: Icon, tip: &str) -> Response {
+    let id = ui.id().with(("icon", icon));
+    let resp =
+        egui::Button::new(egui::Atom::custom(id, egui::Vec2::splat(icons::SIZE))).atom_ui(ui);
+    let response = resp.response.clone().on_hover_text(tip);
+    if let Some(rect) = resp.rect(id) {
+        let visuals = ui.style().interact(&response);
+        icons::paint(
+            ui.painter(),
+            icon,
+            rect.center(),
+            icons::SIZE,
+            visuals.text_color(),
+            visuals.weak_bg_fill,
+        );
+    }
+    response
+}
 use icons::Icon;
 
 /// The app icon as a texture for `points` wide, from the smallest embedded
@@ -82,14 +102,20 @@ impl OwnWindow {
         *self = OwnWindow::default();
     }
 
+    /// The window, once found.
+    pub fn hwnd(&self) -> Option<isize> {
+        self.hwnd.flatten()
+    }
+
     /// The builder of a window made hidden.
     pub fn builder(builder: egui::ViewportBuilder) -> egui::ViewportBuilder {
         builder.with_visible(false)
     }
 
     /// Each frame inside the viewport's closure (`ctx` is the viewport's):
-    /// finds, adopts and shows the window, then uncloaks it.
-    pub fn follow(&mut self, ctx: &egui::Context, title: &str, owner: Option<isize>) {
+    /// finds, adopts and shows the window, then uncloaks it. With `centre`
+    /// the window is put over its owner; without, its caller places it.
+    pub fn follow(&mut self, ctx: &egui::Context, title: &str, owner: Option<isize>, centre: bool) {
         let more = || {
             ctx.request_repaint();
             ctx.request_repaint_of(egui::ViewportId::ROOT);
@@ -105,7 +131,7 @@ impl OwnWindow {
                 let found = owner.and_then(|main| Some((main, crate::win::thread_window(title)?)));
                 if let Some((main, hwnd)) = found {
                     crate::caption::cloak(hwnd, true);
-                    crate::win::adopt(hwnd, main);
+                    crate::win::adopt(hwnd, main, centre);
                     crate::caption::set_dark(hwnd, true);
                     self.hwnd = Some(Some(hwnd));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));

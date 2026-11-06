@@ -87,15 +87,11 @@ pub enum VideoLength {
 impl VideoLength {
     pub const ALL: [VideoLength; 2] = [VideoLength::Whole, VideoLength::Interval];
 
-    pub fn label(self) -> &'static str {
+    /// As a button of the menu, under the heading "Videos".
+    pub fn short_label(self) -> &'static str {
         match self {
-            VideoLength::Whole => tr!("Play videos to the end", "Показывать видео целиком"),
-            VideoLength::Interval => {
-                tr!(
-                    "Show videos as long as pictures",
-                    "Показывать видео столько же, сколько картинки"
-                )
-            }
+            VideoLength::Whole => tr!("To the end", "До конца"),
+            VideoLength::Interval => tr!("As long as pictures", "Как картинки"),
         }
     }
 
@@ -145,14 +141,30 @@ pub fn aspect_from_name(name: &str) -> Option<Option<(u32, u32)>> {
     ASPECTS.into_iter().find(|a| aspect_name(*a) == name)
 }
 
-/// The times a slide can stay, in seconds.
-pub const INTERVALS: [u32; 11] = [3, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600];
+/// The times a slide can stay, in seconds: the slider's steps, finer at
+/// the short end, where a second is felt, than at the long one.
+pub const INTERVALS: [u32; 27] = [
+    3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 25, 30, 40, 45, 60, 90, 120, 180, 240, 300, 420, 600, 900,
+    1200, 1800, 2700, 3600,
+];
+
+/// The step of [`INTERVALS`] nearest to `secs` (a setting written by hand
+/// may be between them).
+pub fn nearest_interval(secs: u32) -> usize {
+    (0..INTERVALS.len())
+        .min_by_key(|&i| INTERVALS[i].abs_diff(secs))
+        .unwrap_or(0)
+}
 
 pub fn interval_label(secs: u32) -> String {
+    let (m, s) = (secs / 60, secs % 60);
     match secs {
-        s if s < 60 => tr!(format!("{s} s"), format!("{s} с")),
-        s if s < 3600 => tr!(format!("{} min", s / 60), format!("{} мин", s / 60)),
-        s => tr!(format!("{} h", s / 3600), format!("{} ч", s / 3600)),
+        _ if secs < 60 => tr!(format!("{secs} s"), format!("{secs} с")),
+        _ if secs >= 3600 && secs.is_multiple_of(3600) => {
+            tr!(format!("{} h", secs / 3600), format!("{} ч", secs / 3600))
+        }
+        _ if s == 0 => tr!(format!("{m} min"), format!("{m} мин")),
+        _ => tr!(format!("{m} min {s} s"), format!("{m} мин {s} с")),
     }
 }
 
@@ -447,5 +459,19 @@ mod tests {
             assert_eq!(aspect_from_name(&aspect_name(a)), Some(a));
         }
         assert_eq!(aspect_from_name("7:5"), None);
+    }
+
+    #[test]
+    fn interval_steps() {
+        assert!(INTERVALS.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(INTERVALS[nearest_interval(10)], 10);
+        assert_eq!(INTERVALS[nearest_interval(11)], 10);
+        assert_eq!(INTERVALS[nearest_interval(1)], 3);
+        assert_eq!(INTERVALS[nearest_interval(86_400)], 3600);
+        crate::i18n::set_lang(crate::i18n::Lang::En);
+        assert_eq!(interval_label(45), "45 s");
+        assert_eq!(interval_label(90), "1 min 30 s");
+        assert_eq!(interval_label(600), "10 min");
+        assert_eq!(interval_label(3600), "1 h");
     }
 }

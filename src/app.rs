@@ -200,8 +200,9 @@ pub struct App {
     pointer_moved: Option<Instant>,
     /// The wheel turned since the last slide it changed.
     wheel: f32,
-    /// A menu asked for at this point of the screen (the tray icon's).
-    menu_at: Option<(i32, i32)>,
+    menu: crate::menu::MenuWindow,
+    /// Windows starts this copy at sign-in (read when the menu opens).
+    autostart: bool,
 }
 
 impl App {
@@ -285,7 +286,8 @@ impl App {
             start_icon: None,
             pointer_moved: None,
             wheel: 0.0,
-            menu_at: None,
+            menu: crate::menu::MenuWindow::default(),
+            autostart: false,
         }
     }
 
@@ -585,7 +587,7 @@ impl App {
             video: self.video,
             aspect: self.aspect,
             on_top: self.on_top,
-            autostart: crate::win::autostart(),
+            autostart: self.autostart,
             tray_only: self.tray_only,
             update: self
                 .updates
@@ -594,11 +596,12 @@ impl App {
         }
     }
 
-    fn open_menu(&mut self, ctx: &egui::Context, frame: &eframe::Frame, at: (i32, i32)) {
-        let Some(hwnd) = self.hwnd else { return };
-        if let Some(cmd) = crate::menu::show(hwnd, at.0, at.1, &self.menu_state()) {
-            self.run(cmd, ctx, frame);
-        }
+    /// Open the menu at `at` (screen pixels).
+    fn open_menu(&mut self, at: (i32, i32)) {
+        // Read once per opening: the Run key may have been changed
+        // elsewhere (Task Manager's start-up list).
+        self.autostart = crate::win::autostart();
+        self.menu.open_at(at);
     }
 
     fn run(&mut self, cmd: Cmd, ctx: &egui::Context, frame: &eframe::Frame) {
@@ -691,6 +694,7 @@ impl App {
                         ),
                     );
                 }
+                self.autostart = crate::win::autostart();
             }
             Cmd::TrayOnly => {
                 self.tray_only = !self.tray_only;
@@ -718,7 +722,7 @@ impl App {
         for hooked in crate::win::take_hooked() {
             match hooked {
                 crate::win::Hooked::TrayClick => {}
-                crate::win::Hooked::TrayMenu(x, y) => self.menu_at = Some((x, y)),
+                crate::win::Hooked::TrayMenu(x, y) => self.open_menu((x, y)),
                 crate::win::Hooked::TrayCreated => {
                     if let Some(tray) = &mut self.tray {
                         tray.add();
@@ -916,8 +920,7 @@ impl App {
             self.run(Cmd::OpenFile, &ctx, frame);
         }
         if drag.secondary_clicked() {
-            let at = crate::win::cursor_pos();
-            self.open_menu(&ctx, frame, at);
+            self.open_menu(crate::win::cursor_pos());
         }
         // The wheel goes through the files, a notch a file.
         if hovering {
@@ -994,9 +997,6 @@ impl eframe::App for App {
         self.updates.poll();
         self.uncloak(&ctx);
         self.take_hooked();
-        if let Some(at) = self.menu_at.take() {
-            self.open_menu(&ctx, frame, at);
-        }
         self.take_scans();
         if !self.about.open {
             self.keys(&ctx, frame);
@@ -1030,6 +1030,15 @@ impl eframe::App for App {
         }
         let owner = self.hwnd;
         self.about.show(&ctx, owner, &mut self.updates);
+        let state = self.menu_state();
+        let cmds = self.menu.show(&ctx, owner, &state);
+        if !cmds.is_empty() {
+            for cmd in cmds {
+                self.run(cmd, &ctx, frame);
+            }
+            // Taken after this frame's show: the next frame acts on them.
+            ctx.request_repaint();
+        }
         self.tray_tip();
         if let Some(d) = wake {
             ctx.request_repaint_after(d);

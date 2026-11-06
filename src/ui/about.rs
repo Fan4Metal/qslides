@@ -75,7 +75,7 @@ impl AboutWindow {
         let id = egui::ViewportId::from_hash_of("about");
         let closed = ctx.show_viewport_immediate(id, builder, |ui, _class| {
             let ctx = ui.ctx().clone();
-            self.own.follow(&ctx, &title, owner);
+            self.own.follow(&ctx, &title, owner, true);
             let icon = super::app_icon(&ctx, ICON, &mut self.icon);
             let panel = egui::CentralPanel::default().show(ui, |ui| {
                 ui.set_width(WIDTH);

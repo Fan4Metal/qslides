@@ -1,11 +1,26 @@
-//! The widget's menu, the one control it has besides its buttons: a menu of
-//! Windows (`TrackPopupMenuEx`), not of egui, because it opens beyond the
-//! edges of a small window. The same menu comes up on a right click on the
-//! window and on the tray icon.
+//! The widget's menu, the one control it has besides its buttons. It is
+//! drawn by egui, but in a window of its own (an immediate viewport without
+//! a frame, owned by the widget, `ui::OwnWindow`): a popup of egui is a
+//! layer inside its window and would be cut by the edges of a small widget,
+//! a window of its own opens beyond them. It opens at the pointer, flipped
+//! left or up near the edges of the screen (`win::place_popup`), on a right
+//! click on the widget and on the tray icon, and closes when it loses the
+//! focus, on Esc and after a command that leads elsewhere.
+//!
+//! It is a panel rather than a list of submenus: the controls of the show
+//! at the top, the settings with a slider for the time a slide stays, the
+//! library's folders under a header that opens, the switches, About and
+//! Exit.
 
 use std::path::PathBuf;
 
-use crate::show::{ASPECTS, Fit, INTERVALS, Order, VideoLength, aspect_label, interval_label};
+use egui::{Key, RichText, Ui};
+
+use crate::show::{
+    ASPECTS, Fit, INTERVALS, Order, VideoLength, aspect_label, interval_label, nearest_interval,
+};
+use crate::ui::OwnWindow;
+use crate::ui::icons::Icon;
 
 /// What the menu can ask for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,7 +48,25 @@ pub enum Cmd {
     Exit,
 }
 
-/// What the menu shows checked and which items it has.
+impl Cmd {
+    /// Whether the menu closes after it: a command that opens something
+    /// else or ends the program. The controls of the show and the settings
+    /// leave it open, so that their effect is seen and more can be changed.
+    pub fn closes_menu(&self) -> bool {
+        matches!(
+            self,
+            Cmd::OpenFile
+                | Cmd::ShowInFolder
+                | Cmd::AddFolder
+                | Cmd::OpenFolder(_)
+                | Cmd::About
+                | Cmd::Update
+                | Cmd::Exit
+        )
+    }
+}
+
+/// What the menu shows: the state of the show and of the settings.
 pub struct State {
     pub has_file: bool,
     pub paused: bool,
@@ -50,304 +83,310 @@ pub struct State {
     pub update: Option<String>,
 }
 
-/// One item of the menu as it is built.
-enum Entry {
-    Item {
-        cmd: Cmd,
-        label: String,
-        checked: bool,
-        enabled: bool,
-    },
-    /// Items checked as one choice (a dot instead of a tick).
-    Choice(Vec<(Cmd, String)>, usize),
-    Sub(String, Vec<Entry>),
-    Separator,
+/// The width of the menu's content, in points.
+const WIDTH: f32 = 300.0;
+/// The panel's margin and border round the content.
+const MARGIN: f32 = 10.0;
+/// The window's title: never shown (it has no caption), it finds the
+/// window among the thread's (`win::thread_window`).
+const TITLE: &str = "qslides menu";
+
+pub struct MenuWindow {
+    pub open: bool,
+    /// Where it was opened, in screen pixels.
+    at: (i32, i32),
+    own: OwnWindow,
+    /// The height of the content, measured in the frame before.
+    height: f32,
+    /// The window has had the focus: losing it now closes the menu.
+    focused: bool,
 }
 
-fn item(cmd: Cmd, label: impl Into<String>) -> Entry {
-    Entry::Item {
-        cmd,
-        label: label.into(),
-        checked: false,
-        enabled: true,
-    }
-}
-
-fn check(cmd: Cmd, label: impl Into<String>, checked: bool) -> Entry {
-    Entry::Item {
-        cmd,
-        label: label.into(),
-        checked,
-        enabled: true,
-    }
-}
-
-fn enabled(cmd: Cmd, label: impl Into<String>, on: bool) -> Entry {
-    Entry::Item {
-        cmd,
-        label: label.into(),
-        checked: false,
-        enabled: on,
-    }
-}
-
-/// `&` shows the next letter underlined in a menu; a path's own is doubled.
-fn escaped(text: &str) -> String {
-    text.replace('&', "&&")
-}
-
-/// The menu's items for `s`, in their order.
-fn entries(s: &State) -> Vec<Entry> {
-    let mut folders: Vec<Entry> = s
-        .folders
-        .iter()
-        .enumerate()
-        .map(|(i, f)| {
-            Entry::Sub(
-                escaped(&f.display().to_string()),
-                vec![
-                    item(
-                        Cmd::OpenFolder(i),
-                        tr!("Open in Explorer", "Открыть в Проводнике"),
-                    ),
-                    item(
-                        Cmd::RemoveFolder(i),
-                        tr!("Remove from the library", "Убрать из библиотеки"),
-                    ),
-                ],
-            )
-        })
-        .collect();
-    if !folders.is_empty() {
-        folders.push(Entry::Separator);
-    }
-    folders.push(item(
-        Cmd::AddFolder,
-        tr!("Add a folder…\tCtrl+O", "Добавить папку…\tCtrl+O"),
-    ));
-    folders.push(enabled(
-        Cmd::Rescan,
-        tr!("Look for new files\tF5", "Найти новые файлы\tF5"),
-        !s.folders.is_empty(),
-    ));
-
-    let intervals = INTERVALS
-        .iter()
-        .map(|&n| (Cmd::Interval(n), interval_label(n)))
-        .collect();
-    let interval_at = INTERVALS
-        .iter()
-        .position(|&n| n == s.interval)
-        .unwrap_or(usize::MAX);
-    let orders = Order::ALL
-        .iter()
-        .map(|&o| (Cmd::Order(o), o.label().to_owned()))
-        .collect();
-    let order_at = Order::ALL.iter().position(|&o| o == s.order).unwrap_or(0);
-    let fits = Fit::ALL
-        .iter()
-        .map(|&f| (Cmd::Fit(f), f.label().to_owned()))
-        .collect();
-    let fit_at = Fit::ALL.iter().position(|&f| f == s.fit).unwrap_or(0);
-    let videos = VideoLength::ALL
-        .iter()
-        .map(|&v| (Cmd::Video(v), v.label().to_owned()))
-        .collect();
-    let video_at = VideoLength::ALL
-        .iter()
-        .position(|&v| v == s.video)
-        .unwrap_or(0);
-    let aspects = ASPECTS
-        .iter()
-        .map(|&a| (Cmd::Aspect(a), aspect_label(a)))
-        .collect();
-    let aspect_at = ASPECTS.iter().position(|&a| a == s.aspect).unwrap_or(0);
-
-    let mut all = Vec::new();
-    if let Some(v) = &s.update {
-        all.push(item(
-            Cmd::Update,
-            tr!(
-                format!("Version {v} is available…"),
-                format!("Доступна версия {v}…")
-            ),
-        ));
-        all.push(Entry::Separator);
-    }
-    all.extend([
-        enabled(
-            Cmd::Previous,
-            tr!("Previous\tLeft", "Предыдущий\tВлево"),
-            s.has_file,
-        ),
-        enabled(
-            Cmd::Next,
-            tr!("Next\tRight", "Следующий\tВправо"),
-            s.has_file,
-        ),
-        Entry::Item {
-            cmd: Cmd::Pause,
-            label: tr!("Pause\tSpace", "Пауза\tПробел").into(),
-            checked: s.paused,
-            enabled: s.has_file,
-        },
-        Entry::Separator,
-        enabled(
-            Cmd::OpenFile,
-            tr!("Open the file\tEnter", "Открыть файл\tEnter"),
-            s.has_file,
-        ),
-        enabled(
-            Cmd::ShowInFolder,
-            tr!("Show in its folder", "Показать в папке"),
-            s.has_file,
-        ),
-        Entry::Separator,
-        Entry::Sub(tr!("Folders", "Папки").into(), folders),
-        Entry::Sub(
-            tr!("Show each for", "Время показа").into(),
-            vec![Entry::Choice(intervals, interval_at)],
-        ),
-        Entry::Sub(
-            tr!("Order", "Порядок").into(),
-            vec![Entry::Choice(orders, order_at)],
-        ),
-        Entry::Sub(
-            tr!("Picture", "Картинка").into(),
-            vec![
-                Entry::Choice(fits, fit_at),
-                Entry::Separator,
-                Entry::Choice(videos, video_at),
-            ],
-        ),
-        Entry::Sub(
-            tr!("Window proportions", "Пропорции окна").into(),
-            vec![Entry::Choice(aspects, aspect_at)],
-        ),
-        Entry::Separator,
-        check(
-            Cmd::OnTop,
-            tr!("Always on top", "Поверх всех окон"),
-            s.on_top,
-        ),
-        check(
-            Cmd::Autostart,
-            tr!("Start with Windows", "Запускать вместе с Windows"),
-            s.autostart,
-        ),
-        check(
-            Cmd::TrayOnly,
-            tr!("Only in the tray", "Только в трее"),
-            s.tray_only,
-        ),
-        Entry::Separator,
-        item(
-            Cmd::About,
-            tr!(
-                format!("About {}\tF1", crate::APP_NAME),
-                format!("О программе {}\tF1", crate::APP_NAME)
-            ),
-        ),
-        item(Cmd::Exit, tr!("Exit", "Выход")),
-    ]);
-    all
-}
-
-/// Show the menu at `(x, y)` (screen pixels) for window `hwnd`, which is
-/// put in front first, so that the menu closes when clicked away from;
-/// the command chosen. It waits until the menu closes.
-pub fn show(hwnd: isize, x: i32, y: i32, state: &State) -> Option<Cmd> {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        DestroyMenu, PostMessageW, SetForegroundWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-        TrackPopupMenuEx, WM_NULL,
-    };
-    let mut cmds = Vec::new();
-    // SAFETY: a menu made, shown and destroyed here, on the window's thread.
-    unsafe {
-        let menu = build(&entries(state), &mut cmds)?;
-        SetForegroundWindow(hwnd as _);
-        let chosen = TrackPopupMenuEx(
-            menu,
-            TPM_RETURNCMD | TPM_RIGHTBUTTON,
-            x,
-            y,
-            hwnd as _,
-            std::ptr::null(),
-        );
-        PostMessageW(hwnd as _, WM_NULL, 0, 0);
-        DestroyMenu(menu);
-        (chosen as usize)
-            .checked_sub(1)
-            .and_then(|i| cmds.get(i).cloned())
-    }
-}
-
-/// A popup menu of `entries`; each command's id is its place in `cmds`
-/// plus one.
-unsafe fn build(
-    entries: &[Entry],
-    cmds: &mut Vec<Cmd>,
-) -> Option<windows_sys::Win32::UI::WindowsAndMessaging::HMENU> {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        AppendMenuW, CheckMenuRadioItem, CreatePopupMenu, MF_BYCOMMAND, MF_CHECKED, MF_GRAYED,
-        MF_POPUP, MF_SEPARATOR, MF_STRING,
-    };
-    let menu = unsafe { CreatePopupMenu() };
-    if menu.is_null() {
-        return None;
-    }
-    for entry in entries {
-        match entry {
-            Entry::Item {
-                cmd,
-                label,
-                checked,
-                enabled,
-            } => {
-                cmds.push(cmd.clone());
-                let mut flags = MF_STRING;
-                if *checked {
-                    flags |= MF_CHECKED;
-                }
-                if !*enabled {
-                    flags |= MF_GRAYED;
-                }
-                let label = crate::win::wide(label);
-                unsafe { AppendMenuW(menu, flags, cmds.len(), label.as_ptr()) };
-            }
-            Entry::Choice(choices, at) => {
-                let first = cmds.len() + 1;
-                for (cmd, label) in choices {
-                    cmds.push(cmd.clone());
-                    let label = crate::win::wide(label);
-                    unsafe { AppendMenuW(menu, MF_STRING, cmds.len(), label.as_ptr()) };
-                }
-                if *at < choices.len() {
-                    let last = cmds.len();
-                    unsafe {
-                        CheckMenuRadioItem(
-                            menu,
-                            first as u32,
-                            last as u32,
-                            (first + at) as u32,
-                            MF_BYCOMMAND,
-                        )
-                    };
-                }
-            }
-            Entry::Sub(label, children) => {
-                let Some(sub) = (unsafe { build(children, cmds) }) else {
-                    continue;
-                };
-                let label = crate::win::wide(label);
-                unsafe { AppendMenuW(menu, MF_POPUP, sub as usize, label.as_ptr()) };
-            }
-            Entry::Separator => unsafe {
-                AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
-            },
+impl Default for MenuWindow {
+    fn default() -> Self {
+        Self {
+            open: false,
+            at: (0, 0),
+            own: OwnWindow::default(),
+            height: 420.0,
+            focused: false,
         }
     }
-    Some(menu)
+}
+
+impl MenuWindow {
+    /// Open the menu at `at` (screen pixels), or move it there.
+    pub fn open_at(&mut self, at: (i32, i32)) {
+        self.open = true;
+        self.at = at;
+        self.own.reset();
+        self.focused = false;
+    }
+
+    /// Draw the menu while it is open; the commands chosen in this frame.
+    /// `owner` is the widget's window.
+    pub fn show(&mut self, ctx: &egui::Context, owner: Option<isize>, state: &State) -> Vec<Cmd> {
+        if !self.open {
+            return Vec::new();
+        }
+        let builder = OwnWindow::builder(
+            egui::ViewportBuilder::default()
+                .with_title(TITLE)
+                .with_inner_size([WIDTH + 2.0 * MARGIN, self.height])
+                .with_decorations(false)
+                .with_resizable(false)
+                .with_taskbar(false)
+                .with_window_level(egui::WindowLevel::AlwaysOnTop),
+        );
+        let mut cmds = Vec::new();
+        let id = egui::ViewportId::from_hash_of("menu");
+        let closed = ctx.show_viewport_immediate(id, builder, |ui, _class| {
+            let ctx = ui.ctx().clone();
+            self.own.follow(&ctx, TITLE, owner, false);
+            if let Some(hwnd) = self.own.hwnd() {
+                crate::win::place_popup(hwnd, self.at);
+            }
+            let visuals = ctx.global_style().visuals.clone();
+            let frame = egui::Frame::new()
+                .fill(visuals.window_fill)
+                .stroke(visuals.window_stroke)
+                .inner_margin(MARGIN - visuals.window_stroke.width);
+            let panel = egui::CentralPanel::default().frame(frame).show(ui, |ui| {
+                ui.set_width(WIDTH);
+                // The content's own height: the panel's is the window's.
+                ui.vertical(|ui| content(ui, state, &mut cmds))
+                    .response
+                    .rect
+                    .height()
+            });
+            let height = (panel.inner + 2.0 * MARGIN).round();
+            if height > 50.0 && (height - self.height).abs() > 1.0 {
+                self.height = height;
+                ctx.request_repaint();
+            }
+            let focused = ctx.input(|i| i.viewport().focused);
+            if focused == Some(true) {
+                self.focused = true;
+            }
+            let lost = self.focused && focused == Some(false);
+            lost || ctx.input(|i| i.key_pressed(Key::Escape) || i.viewport().close_requested())
+        });
+        if closed || cmds.iter().any(Cmd::closes_menu) {
+            self.open = false;
+        }
+        cmds
+    }
+}
+
+/// A row of buttons, one of which is chosen: the command of the one
+/// clicked.
+fn choice<T: Copy + PartialEq>(
+    ui: &mut Ui,
+    current: T,
+    options: impl IntoIterator<Item = (T, String)>,
+) -> Option<T> {
+    let mut chosen = None;
+    ui.horizontal_wrapped(|ui| {
+        for (value, label) in options {
+            if ui.selectable_label(value == current, label).clicked() && value != current {
+                chosen = Some(value);
+            }
+        }
+    });
+    chosen
+}
+
+/// A heading of a group of settings.
+fn heading(ui: &mut Ui, text: &str) {
+    ui.add_space(4.0);
+    ui.label(RichText::new(text).small().weak());
+}
+
+fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
+    // The show: back, pause, on; the file shown, opened or found.
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(s.has_file, |ui| {
+            if crate::ui::icon_button(
+                ui,
+                Icon::SkipBack,
+                tr!("Previous (Left)", "Предыдущий (Влево)"),
+            )
+            .clicked()
+            {
+                cmds.push(Cmd::Previous);
+            }
+            let (icon, tip) = if s.paused {
+                (Icon::Play, tr!("Go on (Space)", "Продолжить (Пробел)"))
+            } else {
+                (Icon::Pause, tr!("Pause (Space)", "Пауза (Пробел)"))
+            };
+            if crate::ui::icon_button(ui, icon, tip).clicked() {
+                cmds.push(Cmd::Pause);
+            }
+            if crate::ui::icon_button(
+                ui,
+                Icon::SkipForward,
+                tr!("Next (Right)", "Следующий (Вправо)"),
+            )
+            .clicked()
+            {
+                cmds.push(Cmd::Next);
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if crate::ui::icon_button(
+                    ui,
+                    Icon::Folder,
+                    tr!("Show in its folder", "Показать в папке"),
+                )
+                .clicked()
+                {
+                    cmds.push(Cmd::ShowInFolder);
+                }
+                if crate::ui::icon_button(
+                    ui,
+                    Icon::Open,
+                    tr!("Open the file (Enter)", "Открыть файл (Enter)"),
+                )
+                .clicked()
+                {
+                    cmds.push(Cmd::OpenFile);
+                }
+            });
+        });
+    });
+    if let Some(v) = &s.update
+        && ui
+            .link(tr!(
+                format!("Version {v} is available…"),
+                format!("Доступна версия {v}…")
+            ))
+            .clicked()
+    {
+        cmds.push(Cmd::Update);
+    }
+    ui.separator();
+
+    heading(ui, tr!("Show each for", "Время показа"));
+    ui.horizontal(|ui| {
+        let mut step = nearest_interval(s.interval);
+        ui.spacing_mut().slider_width = WIDTH - 110.0;
+        let slider = egui::Slider::new(&mut step, 0..=INTERVALS.len() - 1).show_value(false);
+        let response = ui.add(slider);
+        ui.label(interval_label(INTERVALS[step]));
+        if response.changed() && INTERVALS[step] != s.interval {
+            cmds.push(Cmd::Interval(INTERVALS[step]));
+        }
+    });
+    heading(ui, tr!("Order", "Порядок"));
+    if let Some(o) = choice(ui, s.order, Order::ALL.map(|o| (o, o.label().to_owned()))) {
+        cmds.push(Cmd::Order(o));
+    }
+    heading(ui, tr!("Picture", "Картинка"));
+    if let Some(f) = choice(ui, s.fit, Fit::ALL.map(|f| (f, f.label().to_owned()))) {
+        cmds.push(Cmd::Fit(f));
+    }
+    heading(ui, tr!("Videos", "Видео"));
+    if let Some(v) = choice(
+        ui,
+        s.video,
+        VideoLength::ALL.map(|v| (v, v.short_label().to_owned())),
+    ) {
+        cmds.push(Cmd::Video(v));
+    }
+    heading(ui, tr!("Window proportions", "Пропорции окна"));
+    if let Some(a) = choice(ui, s.aspect, ASPECTS.map(|a| (a, aspect_label(a)))) {
+        cmds.push(Cmd::Aspect(a));
+    }
+    ui.add_space(4.0);
+    ui.separator();
+
+    let title = tr!(
+        format!("Folders ({})", s.folders.len()),
+        format!("Папки ({})", s.folders.len())
+    );
+    egui::CollapsingHeader::new(title)
+        .id_salt("folders")
+        .default_open(s.folders.is_empty())
+        .show(ui, |ui| {
+            for (i, folder) in s.folders.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let remove = tr!("Remove from the library", "Убрать из библиотеки");
+                        if crate::ui::icon_button(ui, Icon::Delete, remove).clicked() {
+                            cmds.push(Cmd::RemoveFolder(i));
+                        }
+                        let open = tr!("Open in Explorer", "Открыть в Проводнике");
+                        if crate::ui::icon_button(ui, Icon::Folder, open).clicked() {
+                            cmds.push(Cmd::OpenFolder(i));
+                        }
+                        let text = folder.display().to_string();
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add(egui::Label::new(&text).truncate())
+                                .on_hover_text(&text);
+                        });
+                    });
+                });
+            }
+            ui.horizontal(|ui| {
+                if ui
+                    .button(tr!("Add a folder…", "Добавить папку…"))
+                    .on_hover_text("Ctrl+O")
+                    .clicked()
+                {
+                    cmds.push(Cmd::AddFolder);
+                }
+                let rescan = egui::Button::new(tr!("Look for new files", "Найти новые файлы"));
+                if ui
+                    .add_enabled(!s.folders.is_empty(), rescan)
+                    .on_hover_text("F5")
+                    .clicked()
+                {
+                    cmds.push(Cmd::Rescan);
+                }
+            });
+        });
+    ui.separator();
+
+    let mut switch = |ui: &mut Ui, on: bool, label: &str, cmd: Cmd| {
+        let mut value = on;
+        if ui.checkbox(&mut value, label).changed() {
+            cmds.push(cmd);
+        }
+    };
+    switch(
+        ui,
+        s.on_top,
+        tr!("Always on top", "Поверх всех окон"),
+        Cmd::OnTop,
+    );
+    switch(
+        ui,
+        s.autostart,
+        tr!("Start with Windows", "Запускать вместе с Windows"),
+        Cmd::Autostart,
+    );
+    switch(
+        ui,
+        s.tray_only,
+        tr!("Only in the tray", "Только в трее"),
+        Cmd::TrayOnly,
+    );
+    ui.separator();
+
+    ui.horizontal(|ui| {
+        let about = tr!(
+            format!("About {}", crate::APP_NAME),
+            format!("О программе {}", crate::APP_NAME)
+        );
+        if ui.button(about).on_hover_text("F1").clicked() {
+            cmds.push(Cmd::About);
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button(tr!("Exit", "Выход")).clicked() {
+                cmds.push(Cmd::Exit);
+            }
+        });
+    });
 }
 
 #[cfg(test)]
@@ -358,7 +397,7 @@ mod tests {
         State {
             has_file: true,
             paused: false,
-            folders: vec![PathBuf::from(r"C:\Photos & Co")],
+            folders: vec![PathBuf::from(r"C:\Photos & Co"), PathBuf::from(r"D:\Video")],
             interval: 10,
             order: Order::Random,
             fit: Fit::Fill,
@@ -371,34 +410,26 @@ mod tests {
         }
     }
 
-    /// Every command of the menu, in the order of the ids it is given.
-    fn commands(entries: &[Entry], out: &mut Vec<Cmd>) {
-        for e in entries {
-            match e {
-                Entry::Item { cmd, .. } => out.push(cmd.clone()),
-                Entry::Choice(choices, _) => out.extend(choices.iter().map(|(c, _)| c.clone())),
-                Entry::Sub(_, children) => commands(children, out),
-                Entry::Separator => {}
-            }
+    /// The menu drawn headless; a frame with no input asks for nothing.
+    #[test]
+    fn the_menu_draws_and_asks_for_nothing_by_itself() {
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            let mut cmds = Vec::new();
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| content(ui, &state(), &mut cmds));
+            });
+            out.textures_delta.clear();
+            assert!(cmds.is_empty(), "{cmds:?}");
         }
     }
 
     #[test]
-    fn the_menu_holds_every_choice() {
-        let mut cmds = Vec::new();
-        commands(&entries(&state()), &mut cmds);
-        for cmd in [
-            Cmd::RemoveFolder(0),
-            Cmd::Interval(3600),
-            Cmd::Order(Order::Date),
-            Cmd::Aspect(None),
-            Cmd::Exit,
-        ] {
-            assert!(cmds.contains(&cmd), "{cmd:?}");
-        }
-        let unique: std::collections::HashSet<String> =
-            cmds.iter().map(|c| format!("{c:?}")).collect();
-        assert_eq!(unique.len(), cmds.len(), "no command twice");
-        assert_eq!(escaped(r"C:\Photos & Co"), r"C:\Photos && Co");
+    fn what_closes_the_menu() {
+        assert!(Cmd::About.closes_menu());
+        assert!(Cmd::OpenFolder(0).closes_menu());
+        assert!(!Cmd::Interval(5).closes_menu());
+        assert!(!Cmd::Next.closes_menu());
+        assert!(!Cmd::RemoveFolder(0).closes_menu());
     }
 }

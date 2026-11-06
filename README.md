@@ -23,7 +23,7 @@ qslides is a small widget for the Windows desktop that works as a photo frame. S
 - **Pictures and videos**: JPEG, PNG, GIF, BMP, TIFF, JPEG XR, and HEIC, AVIF and WebP when their extensions from the Microsoft Store are installed; MP4, MOV, MKV, AVI, WMV, WebM and other videos that Windows plays, without sound.
 - **Slideshow settings**: the time each slide stays (3 seconds to an hour), the order (by name, by date, random), a picture fitted whole or filling the window, videos played to the end or as long as pictures (see [Slideshow](#slideshow)).
 - **A frameless window** with presets of its proportions, from 16:9 to 9:16, kept while the window is sized.
-- **Start with Windows, always on top, only in the tray**: each is one item of the menu.
+- **Start with Windows, always on top, only in the tray**: each is one switch of the menu.
 - **Quiet**: between slides the program does no work; the next slide is decoded in advance, and slides change with a short cross-fade.
 - **English or Russian interface**: it follows the language of Windows and can be changed in the About window (`F1`).
 - **Portable**: the [portable archive](#installation) keeps its settings next to the program.
@@ -43,17 +43,17 @@ The executables are not code-signed, so Windows SmartScreen may warn about an un
 
 The window shows the current slide on a black background. Dragging the picture moves the window, dragging its edges and corners sizes it. When the pointer moves over the window, the **Previous**, **Pause** and **Next** buttons appear at its bottom and fade out again after a few seconds. A double click opens the file shown in the program Windows associates with it.
 
-Everything else is in the menu of the right mouse button, which is also opened by the right button on the tray icon:
+Everything else is in the menu of the right mouse button, which is also opened by the right button on the tray icon. The menu is a small panel in a window of its own, so it extends beyond the edges of a small widget; near the edges of the screen it opens to the left or upward. It closes on a click elsewhere or on `Esc`; the settings in it take effect at once and leave it open.
 
-| Item | What it does |
+| Part | What it does |
 |---|---|
-| **Previous**, **Next**, **Pause** | Move through the slides or stop the show |
-| **Open the file**, **Show in its folder** | The file shown, in its program or selected in Explorer |
-| **Folders** | The library: each folder with **Open in Explorer** and **Remove from the library**, **Add a folder…**, **Look for new files** |
-| **Show each for** | The time a slide stays: 3, 5, 10, 15, 30 seconds, 1, 2, 5, 10, 30 minutes, 1 hour |
+| Buttons at the top | **Previous**, **Pause**, **Next**; **Open the file** in its program, **Show in its folder** in Explorer |
+| **Show each for** | A slider for the time a slide stays, from 3 seconds to 1 hour |
 | **Order** | **By name**, **By date**, **Random** |
-| **Picture** | **Fit whole** or **Fill the window**; **Play videos to the end** or **Show videos as long as pictures** |
+| **Picture** | **Fit whole** or **Fill the window** |
+| **Videos** | **To the end** or **As long as pictures** |
 | **Window proportions** | **Any**, 16:9, 16:10, 3:2, 4:3, 5:4, 1:1, 4:5, 3:4, 2:3, 9:16 |
+| **Folders** | The library: each folder with buttons to open it in Explorer and to remove it, **Add a folder…**, **Look for new files** |
 | **Always on top** | The window stays above other windows |
 | **Start with Windows** | The program starts when the user signs in |
 | **Only in the tray** | No button on the taskbar; an icon in the notification area instead |
@@ -78,7 +78,7 @@ The folders are listed one per line in `library.txt`, next to the settings file:
 
 A picture is scaled down to the size of the screen when it is decoded and turned upright by its EXIF orientation. **Fit whole** shows all of it with black bars where its proportions differ from the window's; **Fill the window** covers the window and cuts the edges of the picture.
 
-A video is shown either to its end, however long it is (**Play videos to the end**), or for the same time as a picture (**Show videos as long as pictures**): a longer one is cut off, a shorter one starts again from the beginning. The sound of a video is never played. A file that cannot be decoded is skipped until the next scan.
+A video is shown either to its end, however long it is (**Videos: To the end**), or for the same time as a picture (**Videos: As long as pictures**): a longer one is cut off, a shorter one starts again from the beginning. The sound of a video is never played. A file that cannot be decoded is skipped until the next scan.
 
 <details><summary>Which formats need extensions from the Microsoft Store</summary>
 

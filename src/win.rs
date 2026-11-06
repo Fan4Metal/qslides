@@ -365,10 +365,13 @@ pub fn thread_window(title: &str) -> Option<isize> {
 /// A window of the program's own (About): owned by `owner`, so it stays
 /// over it (even when that one is always on top), and centred over it
 /// within its work area.
-pub fn adopt(hwnd: isize, owner: isize) {
+pub fn adopt(hwnd: isize, owner: isize, centre: bool) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{GWLP_HWNDPARENT, SetWindowLongPtrW};
     unsafe { SetWindowLongPtrW(hwnd as _, GWLP_HWNDPARENT, owner) };
     round_corners(hwnd);
+    if !centre {
+        return;
+    }
     if let (Some(main), Some(own)) = (window_rect(owner), window_rect(hwnd)) {
         let (w, h) = (own[2] - own[0], own[3] - own[1]);
         let x = (main[0] + main[2] - w) / 2;
@@ -380,6 +383,32 @@ pub fn adopt(hwnd: isize, owner: isize) {
             rect = [rect[0] + dx, rect[1] + dy, rect[2] + dx, rect[3] + dy];
         }
         set_rect(hwnd, rect);
+    }
+}
+
+/// Where a popup of `size` pixels opened at `at` goes: its top left corner
+/// at the point, or flipped left or up where it would leave `work` (the
+/// tray icon's menu opens upward from the taskbar), kept inside `work`.
+pub fn popup_rect(at: (i32, i32), size: (i32, i32), work: [i32; 4]) -> [i32; 4] {
+    let (w, h) = size;
+    let mut left = if at.0 + w > work[2] { at.0 - w } else { at.0 };
+    let mut top = if at.1 + h > work[3] { at.1 - h } else { at.1 };
+    left = left.clamp(work[0], (work[2] - w).max(work[0]));
+    top = top.clamp(work[1], (work[3] - h).max(work[1]));
+    [left, top, left + w, top + h]
+}
+
+/// Window `hwnd` (a popup) moved to open at `at` (screen pixels) as
+/// [`popup_rect`] says, its size kept; nothing done when it is there.
+pub fn place_popup(hwnd: isize, at: (i32, i32)) {
+    let Some(r) = window_rect(hwnd) else { return };
+    let point = [at.0, at.1, at.0 + 1, at.1 + 1];
+    let Some((work, _)) = monitor_at(point) else {
+        return;
+    };
+    let wanted = popup_rect(at, (r[2] - r[0], r[3] - r[1]), work);
+    if wanted != r {
+        set_rect(hwnd, wanted);
     }
 }
 
@@ -786,6 +815,22 @@ mod tests {
             kept_aspect([10, 10, 999, 210], 6, (1, 1)),
             [10, 10, 210, 210]
         );
+    }
+
+    #[test]
+    fn popups_stay_on_the_screen() {
+        let work = [0, 0, 1920, 1040];
+        assert_eq!(
+            popup_rect((100, 100), (300, 400), work),
+            [100, 100, 400, 500]
+        );
+        // From the tray, at the bottom right: up and to the left.
+        assert_eq!(
+            popup_rect((1900, 1060), (300, 400), work),
+            [1600, 640, 1900, 1040]
+        );
+        // Taller than the screen: from its top.
+        assert_eq!(popup_rect((10, 500), (300, 2000), work)[1], 0);
     }
 
     #[test]

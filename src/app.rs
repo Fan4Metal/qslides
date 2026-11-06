@@ -596,6 +596,7 @@ impl App {
                 .updates
                 .newer()
                 .map(|t| crate::update::version_of(t).to_owned()),
+            position: self.playlist.position(),
         }
     }
 

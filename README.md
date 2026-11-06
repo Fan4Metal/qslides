@@ -47,7 +47,7 @@ Everything else is in the menu of the right mouse button, which is also opened b
 
 | Part | What it does |
 |---|---|
-| Buttons at the top | **Previous**, **Pause**, **Next**; **Open the file** in its program, **Show in its folder** in Explorer |
+| Buttons at the top | **Previous**, **Pause**, **Next** and the number of the file shown out of all the files of the show (`12 / 340`); **Open the file** in its program, **Show in its folder** in Explorer |
 | **Show each for** | A slider for the time a slide stays, from 1 second to 1 hour |
 | **Order** | **By name**, **By date**, **Random** |
 | **Picture** | **Fit whole** or **Fill the window** |

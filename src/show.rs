@@ -225,6 +225,13 @@ impl Playlist {
         self.items.len()
     }
 
+    /// The place of the current file in the show, from 1, and the number of
+    /// files in it (those that could not be shown are no longer counted);
+    /// `None` while it is empty.
+    pub fn position(&self) -> Option<(usize, usize)> {
+        (!self.sequence.is_empty()).then(|| (self.pos + 1, self.sequence.len()))
+    }
+
     /// The files of a new scan; the show goes on from `keep` (the file
     /// shown, or the one shown when the program was closed) if it is still
     /// there, else from the start.
@@ -387,10 +394,13 @@ mod tests {
     #[test]
     fn by_name_and_round() {
         let mut p = Playlist::new(Order::Name);
+        assert_eq!(p.position(), None);
         p.set_items(items(), None);
         assert_eq!(name(&p), "a.jpg");
+        assert_eq!(p.position(), Some((1, 4)));
         p.advance();
         assert_eq!(name(&p), "b2.jpg");
+        assert_eq!(p.position(), Some((2, 4)));
         assert_eq!(p.peek_next().unwrap().path, PathBuf::from(r"C:\p\b10.jpg"));
         p.advance();
         p.advance();

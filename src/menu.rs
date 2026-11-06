@@ -81,6 +81,9 @@ pub struct State {
     pub tray_only: bool,
     /// The version of a newer release, when one was found.
     pub update: Option<String>,
+    /// The place of the file shown in the show, from 1, and the number of
+    /// files in it.
+    pub position: Option<(usize, usize)>,
 }
 
 /// The width of the menu's content, in points.
@@ -231,6 +234,13 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
             .clicked()
             {
                 cmds.push(Cmd::Next);
+            }
+            if let Some((at, of)) = s.position {
+                ui.add_space(6.0);
+                ui.label(format!("{at} / {of}")).on_hover_text(tr!(
+                    "The file shown and the number of files in the show",
+                    "Показанный файл и число файлов в показе"
+                ));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if crate::ui::icon_button(
@@ -407,6 +417,7 @@ mod tests {
             autostart: false,
             tray_only: false,
             update: Some("0.2.0".into()),
+            position: Some((12, 340)),
         }
     }
 

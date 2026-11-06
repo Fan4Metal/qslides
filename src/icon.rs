@@ -67,62 +67,132 @@ fn circle(x: f32, y: f32, cx: f32, cy: f32, r: f32) -> f32 {
     ((x - cx).powi(2) + (y - cy).powi(2)).sqrt() - r
 }
 
+/// The frame's outer edge.
+const FRAME_MIN: (f32, f32) = (0.06, 0.12);
+const FRAME_MAX: (f32, f32) = (0.94, 0.88);
+const FRAME_R: f32 = 0.07;
+/// The width of the slim profile.
+const PROFILE: f32 = 0.055;
+/// The picture inside the mat.
+const PIC_MIN: (f32, f32) = (0.205, 0.265);
+const PIC_MAX: (f32, f32) = (0.795, 0.735);
+
 /// The colour of the icon at `(x, y)`, both in 0..1 of the icon's side;
 /// `px` is the size of a pixel of the layer drawn, in the same units, the
-/// width the edges are smoothed over. A photo frame on the desk: a wooden
-/// frame, lit from above, round a landscape (sky, sun, two green hills),
-/// with three dots of a slideshow on its lower edge (not in the small
-/// layers, where they would be a smudge).
+/// width the edges are smoothed over. A modern photo frame: a slim graphite
+/// profile with rounded corners, lit along its top edge and darker at its
+/// foot, a wide white mat with a fine bevel, and a bright flat landscape
+/// (a sky from blue to warm, a sun, layered hills, a lake's band) under a
+/// soft glint of glass. Below 40 px the mat narrows and the details go;
+/// the profile keeps at least a pixel and a half, so the frame still reads
+/// on a dark taskbar.
 fn sample(x: f32, y: f32, px: f32) -> Rgba {
     let edge = |d: f32| smoothstep(px * 0.5, -px * 0.5, d);
+    let small = px > 1.0 / 40.0;
     let mut c = [0.0; 4];
-    let (outer_min, outer_max) = ((0.06, 0.13), (0.94, 0.87));
-    // A soft shadow below.
-    let shadow = rounded_box(x, y - 0.025, outer_min, outer_max, 0.09);
+
+    // A soft shadow under the frame.
+    let shadow = rounded_box(x, y - 0.03, FRAME_MIN, FRAME_MAX, FRAME_R);
     c = over(
         c,
-        with_alpha(hex(0x000000), 0.28 * smoothstep(0.05, -0.02, shadow)),
+        with_alpha(hex(0x000000), 0.30 * smoothstep(0.06, -0.03, shadow)),
     );
-    // The frame: warm wood, lighter at the top, a darker rim.
-    let frame = rounded_box(x, y, outer_min, outer_max, 0.08);
-    let wood = mix(
-        hex(0xd9a066),
-        hex(0x8f5628),
-        (y - outer_min.1) / (outer_max.1 - outer_min.1),
+
+    // The profile: graphite, lighter at the top, a bright line along its
+    // outer top edge and a dark one at its inner edge.
+    let d = rounded_box(x, y, FRAME_MIN, FRAME_MAX, FRAME_R);
+    let width = PROFILE.max(px * 1.5);
+    let inner = d + width;
+    let t = ((y - FRAME_MIN.1) / (FRAME_MAX.1 - FRAME_MIN.1)).clamp(0.0, 1.0);
+    let graphite = mix(hex(0x4a515c), hex(0x1f2329), t);
+    c = over(c, with_alpha(graphite, edge(d)));
+    let line = px.max(0.008);
+    let top_light = smoothstep(0.55, 0.0, t) * (1.0 - smoothstep(0.0, line * 1.6, -d));
+    c = over(c, with_alpha(hex(0xc9d1db), 0.75 * top_light * edge(d)));
+    // The face of the profile, a satin band in its middle.
+    let across = (-d / width).clamp(0.0, 1.0);
+    let satin = (1.0 - ((across - 0.45) / 0.3).powi(2)).max(0.0) * 0.12 * (1.0 - t);
+    c = over(
+        c,
+        with_alpha(hex(0xffffff), satin * edge(d) * (1.0 - edge(inner))),
     );
-    c = over(c, with_alpha(mix(wood, hex(0x5c3215), 0.65), edge(frame)));
-    c = over(c, with_alpha(wood, edge(frame + px.max(0.012))));
-    // The picture.
-    let (pic_min, pic_max) = ((0.17, 0.23), (0.83, 0.74));
-    let picture = rounded_box(x, y, pic_min, pic_max, 0.02);
-    let inside = edge(picture);
-    if inside > 0.0 {
-        let t = (y - pic_min.1) / (pic_max.1 - pic_min.1);
-        let mut p = mix(hex(0x3d9be9), hex(0xbfe6ff), t);
-        p = over(
-            p,
-            with_alpha(hex(0xffd23f), edge(circle(x, y, 0.64, 0.38, 0.075))),
+    c = over(
+        c,
+        with_alpha(
+            hex(0x0d0f12),
+            0.8 * edge(inner) * (1.0 - edge(inner + line)),
+        ),
+    );
+
+    // The mat: white, shaded just under the profile at the top.
+    let (pic_min, pic_max) = if small {
+        // Narrower: a white line of a pixel or so.
+        let m = px * 1.2;
+        let w = width + m;
+        (
+            (FRAME_MIN.0 + w, FRAME_MIN.1 + w),
+            (FRAME_MAX.0 - w, FRAME_MAX.1 - w),
+        )
+    } else {
+        (PIC_MIN, PIC_MAX)
+    };
+    let in_mat = edge(inner + line);
+    if in_mat > 0.0 {
+        let depth = -(inner + line);
+        let shade = 1.0 - 0.10 * smoothstep(0.025, 0.0, depth) * (1.0 - t);
+        let white = hex(0xf7f7f5);
+        c = over(
+            c,
+            with_alpha(
+                [white[0] * shade, white[1] * shade, white[2] * shade, 1.0],
+                in_mat,
+            ),
         );
-        p = over(
-            p,
-            with_alpha(hex(0x66bb4a), edge(circle(x, y, 0.32, 1.02, 0.40))),
-        );
-        p = over(
-            p,
-            with_alpha(hex(0x2f8a3a), edge(circle(x, y, 0.80, 1.10, 0.43))),
-        );
-        c = over(c, with_alpha(p, inside));
-        // A thin dark line round the picture, where it sits in the frame.
-        let rim = edge(picture.abs() - px.max(0.006) * 0.5) * 0.45;
-        c = over(c, with_alpha(hex(0x3a2210), rim));
     }
-    // The slideshow's dots, the first one lit.
-    if px < 1.0 / 40.0 {
-        for (i, dx) in [-0.06f32, 0.0, 0.06].into_iter().enumerate() {
-            let dot = edge(circle(x, y, 0.5 + dx, 0.805, 0.019));
-            let colour = if i == 0 { hex(0xfff4e0) } else { hex(0x6b3d1b) };
-            c = over(c, with_alpha(colour, dot));
+
+    // The picture, with a fine grey bevel line round it.
+    let picture = rounded_box(x, y, pic_min, pic_max, 0.008);
+    if !small {
+        let bevel = edge(picture - 0.006) * (1.0 - edge(picture));
+        c = over(c, with_alpha(hex(0xd9d6cf), bevel));
+    }
+    let in_picture = edge(picture);
+    if in_picture > 0.0 {
+        let v = ((y - pic_min.1) / (pic_max.1 - pic_min.1)).clamp(0.0, 1.0);
+        let u = ((x - pic_min.0) / (pic_max.0 - pic_min.0)).clamp(0.0, 1.0);
+        // Sky: deep blue at the top to a warm haze at the horizon.
+        let mut p = if v < 0.62 {
+            mix(hex(0x2b6fe0), hex(0x8fc8ff), v / 0.62)
+        } else {
+            mix(hex(0x8fc8ff), hex(0xffd9a8), (v - 0.62) / 0.12)
+        };
+        // The sun, low, with a glow.
+        let (sx, sy) = (
+            pic_min.0 + 0.68 * (pic_max.0 - pic_min.0),
+            pic_min.1 + 0.42 * (pic_max.1 - pic_min.1),
+        );
+        let sr = 0.11 * (pic_max.0 - pic_min.0);
+        let sun = circle(x, y, sx, sy, sr);
+        p = over(
+            p,
+            with_alpha(hex(0xfff1c4), 0.45 * smoothstep(sr * 1.4, 0.0, sun)),
+        );
+        p = over(p, with_alpha(hex(0xffc93c), edge(sun)));
+        // Hills: far ones blue-green, near ones bright green.
+        let h = pic_max.1 - pic_min.1;
+        let far = pic_min.1 + h * (0.62 - 0.08 * (u * 5.0).sin() * (1.0 - u * 0.4));
+        p = over(p, with_alpha(hex(0x3f9a8c), edge(far - y)));
+        let near = pic_min.1 + h * (0.74 - 0.10 * ((u - 0.15) * 3.2).cos());
+        p = over(p, with_alpha(hex(0x4cbf5a), edge(near - y)));
+        let front = pic_min.1 + h * (0.86 + 0.06 * ((u - 0.8) * 3.0).cos());
+        p = over(p, with_alpha(hex(0x2f9446), edge(front - y)));
+        if !small {
+            // A glint of the glass across the top left.
+            let s = u + v;
+            let glint = smoothstep(0.30, 0.36, s) * (1.0 - smoothstep(0.46, 0.56, s));
+            p = over(p, with_alpha(hex(0xffffff), 0.14 * glint));
         }
+        c = over(c, with_alpha(p, in_picture));
     }
     c
 }

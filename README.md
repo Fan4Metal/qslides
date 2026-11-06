@@ -77,7 +77,7 @@ The folders are listed one per line in `library.txt`, next to the settings file:
 
 A picture is scaled down to the size of the screen when it is decoded and turned upright by its EXIF orientation. **Fit whole** shows all of it with black bars where its proportions differ from the window's; **Fill the window** covers the window and cuts the edges of the picture.
 
-A video is shown either to its end, however long it is (**Videos: To the end**), or for the same time as a picture (**Videos: As long as pictures**): a longer one is cut off, a shorter one starts again from the beginning. The sound of a video is never played. A file that cannot be decoded is skipped until the next scan.
+A video is shown either to its end, however long it is (**Videos: To the end**), or for the same time as a picture (**Videos: As long as pictures**): a longer one is cut off, a shorter one starts again from the beginning. The sound of a video is never played. Videos are decoded on the graphics card when Windows can, so 4K videos of a phone play smoothly; a slide shows at most 30 frames a second. A file that cannot be decoded is skipped until the next scan.
 
 <details><summary>Which formats need extensions from the Microsoft Store</summary>
 

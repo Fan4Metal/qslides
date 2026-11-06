@@ -17,7 +17,12 @@ use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 
 use egui::{Color32, ColorImage};
-use windows::Win32::Foundation::GENERIC_READ;
+use windows::Win32::Foundation::{E_FAIL, GENERIC_READ, HMODULE};
+use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+use windows::Win32::Graphics::Direct3D11::{
+    D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION,
+    D3D11CreateDevice, ID3D11Device, ID3D11Multithread,
+};
 use windows::Win32::Graphics::Imaging::{
     CLSID_WICImagingFactory, GUID_WICPixelFormat32bppRGBA, IWICBitmapSource, IWICImagingFactory,
     WICBitmapDitherTypeNone, WICBitmapInterpolationModeFant, WICBitmapPaletteTypeCustom,
@@ -30,10 +35,15 @@ use windows::Win32::Media::MediaFoundation::{
     MFCreateMediaType, MFCreateSourceReaderFromURL, MFMediaType_Video, MFSTARTUP_FULL, MFShutdown,
     MFStartup, MFVideoFormat_RGB32,
 };
+use windows::Win32::Media::MediaFoundation::{
+    IMFDXGIDeviceManager, MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, MF_SOURCE_READER_D3D_MANAGER,
+    MFCreateDXGIDeviceManager,
+};
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
 };
+use windows::core::Interface;
 use windows::core::{GUID, PCWSTR, w};
 
 /// COM for the current thread (multithreaded), released when dropped.
@@ -236,15 +246,80 @@ impl Video {
     }
 }
 
+/// A video open for decoding: its reader, the stream read, the size of the
+/// frames it delivers, and the graphics card's device it decodes on, if it
+/// does (kept alive as long as the reader, which is dropped first).
+struct Opened {
+    reader: IMFSourceReader,
+    stream: u32,
+    width: u32,
+    height: u32,
+    gpu: Option<(IMFDXGIDeviceManager, ID3D11Device)>,
+}
+
+/// A Direct3D 11 device for decoding video, in a device manager Media
+/// Foundation takes (qrec's way to give its encoder the device).
+fn gpu_device() -> windows::core::Result<(IMFDXGIDeviceManager, ID3D11Device)> {
+    let mut device = None;
+    unsafe {
+        D3D11CreateDevice(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            HMODULE::default(),
+            D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            None,
+            D3D11_SDK_VERSION,
+            Some(&mut device),
+            None,
+            None,
+        )?;
+    }
+    let device: ID3D11Device = device.ok_or(windows::core::Error::from(E_FAIL))?;
+    // The decoder and the video processor use it from their own threads.
+    unsafe {
+        let _ = device
+            .cast::<ID3D11Multithread>()?
+            .SetMultithreadProtected(true);
+    }
+    let (mut token, mut manager) = (0u32, None);
+    unsafe { MFCreateDXGIDeviceManager(&mut token, &mut manager)? };
+    let manager = manager.ok_or(windows::core::Error::from(E_FAIL))?;
+    unsafe { manager.ResetDevice(&device, token)? };
+    Ok((manager, device))
+}
+
 /// The source reader of `path` with its first video stream selected and
 /// decoded to 32-bit BGRX, scaled by the video processor to fit
-/// `max_side` (as stored when the processor refuses); the frame size.
-fn open_video(path: &Path, max_side: u32) -> Result<(IMFSourceReader, u32, u32, u32), String> {
+/// `max_side` (as stored when the processor refuses). With `gpu`, the
+/// decoder and the video processor work on the graphics card (DXVA):
+/// without it, a 4K HEVC video of a phone at 60 frames a second was
+/// decoded and scaled on the processor and played far too slowly.
+fn open_video(path: &Path, max_side: u32, gpu: bool) -> Result<Opened, String> {
+    let gpu = if gpu {
+        match gpu_device() {
+            Ok(d) => Some(d),
+            Err(e) => {
+                log::info!("no graphics card for video: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let mut attributes: Option<IMFAttributes> = None;
-    unsafe { MFCreateAttributes(&mut attributes, 1) }.map_err(|e| err("attributes", e))?;
+    unsafe { MFCreateAttributes(&mut attributes, 3) }.map_err(|e| err("attributes", e))?;
     let attributes = attributes.ok_or("no attributes")?;
-    unsafe { attributes.SetUINT32(&MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, 1) }
-        .map_err(|e| err("attributes", e))?;
+    let set = || -> windows::core::Result<()> {
+        unsafe {
+            attributes.SetUINT32(&MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, 1)?;
+            if let Some((manager, _)) = &gpu {
+                attributes.SetUnknown(&MF_SOURCE_READER_D3D_MANAGER, manager)?;
+                attributes.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1)?;
+            }
+        }
+        Ok(())
+    };
+    set().map_err(|e| err("attributes", e))?;
     let url = crate::win::wide(path);
     let reader = unsafe { MFCreateSourceReaderFromURL(PCWSTR(url.as_ptr()), &attributes) }
         .map_err(|e| err("cannot open", e))?;
@@ -291,8 +366,35 @@ fn open_video(path: &Path, max_side: u32) -> Result<(IMFSourceReader, u32, u32, 
     if fw == 0 || fh == 0 {
         return Err(format!("frames of {fw}x{fh}"));
     }
-    Ok((reader, stream, fw, fh))
+    Ok(Opened {
+        reader,
+        stream,
+        width: fw,
+        height: fh,
+        gpu,
+    })
 }
+
+/// The video on the graphics card, else on the processor: a card or a
+/// driver that cannot take it is no reason not to show it.
+fn open_video_somehow(path: &Path, max_side: u32) -> Result<Opened, String> {
+    match open_video(path, max_side, true) {
+        Ok(opened) => Ok(opened),
+        Err(e) => {
+            log::info!(
+                "{}: not on the graphics card ({e}), on the processor",
+                path.display()
+            );
+            open_video(path, max_side, false)
+        }
+    }
+}
+
+/// The least time between frames sent to the window: 30 a second. A video
+/// of 60 frames a second has every other frame decoded but not copied off
+/// the graphics card and converted, which halves that work; a photo frame
+/// shows no difference.
+const FRAME_STEP: i64 = SECOND / 31;
 
 fn decode_video(
     path: &Path,
@@ -302,7 +404,25 @@ fn decode_video(
     stop: &AtomicBool,
     ctx: &egui::Context,
 ) -> Result<(), String> {
-    let (reader, stream, w, h) = open_video(path, max_side)?;
+    let opened = open_video_somehow(path, max_side)?;
+    log::debug!(
+        "{}: {}x{} frames, on the {}",
+        path.display(),
+        opened.width,
+        opened.height,
+        if opened.gpu.is_some() {
+            "graphics card"
+        } else {
+            "processor"
+        }
+    );
+    let Opened {
+        reader,
+        stream,
+        width: w,
+        height: h,
+        gpu: _gpu,
+    } = opened;
     let stride = unsafe { reader.GetCurrentMediaType(stream) }
         .and_then(|t| unsafe { t.GetUINT32(&MF_MT_DEFAULT_STRIDE) })
         .map_or(w as i32 * 4, |s| s as i32);
@@ -345,6 +465,9 @@ fn decode_video(
             continue;
         }
         let Some(sample) = sample else { continue };
+        if frames > 0 && offset + time < last + FRAME_STEP {
+            continue;
+        }
         let image = pixels(&sample, w as usize, h as usize, stride).map_err(|e| err("frame", e))?;
         last = offset + time;
         frames += 1;
@@ -504,6 +627,62 @@ mod tests {
             frames as f64 / secs
         );
         assert!(frames > 0);
+    }
+
+    /// Every frame of the video named by `QSLIDES_VIDEO` decoded, scaled to
+    /// 1920 and copied out, on the graphics card and on the processor:
+    /// frames a second of each way, with `--nocapture`.
+    #[test]
+    #[ignore]
+    fn video_gpu_and_cpu() {
+        let path = std::path::PathBuf::from(std::env::var("QSLIDES_VIDEO").expect("QSLIDES_VIDEO"));
+        let _com = Com::init();
+        unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) }.unwrap();
+        for gpu in [true, false] {
+            let started = std::time::Instant::now();
+            let opened = match open_video(&path, 1920, gpu) {
+                Ok(o) => o,
+                Err(e) => {
+                    println!("gpu {gpu}: {e}");
+                    continue;
+                }
+            };
+            let on_gpu = opened.gpu.is_some();
+            let (mut frames, mut copied) = (0u32, 0u32);
+            loop {
+                let (mut flags, mut sample) = (0u32, None::<IMFSample>);
+                unsafe {
+                    opened.reader.ReadSample(
+                        opened.stream,
+                        0,
+                        None,
+                        Some(&mut flags),
+                        None,
+                        Some(&mut sample),
+                    )
+                }
+                .unwrap();
+                if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 || frames >= 600 {
+                    break;
+                }
+                let Some(sample) = sample else { continue };
+                frames += 1;
+                if frames % 2 == 0 {
+                    let w = opened.width as usize;
+                    pixels(&sample, w, opened.height as usize, w as i32 * 4).unwrap();
+                    copied += 1;
+                }
+            }
+            let secs = started.elapsed().as_secs_f64();
+            println!(
+                "on the {}: {}x{}, {frames} frames ({copied} copied) in {secs:.2} s, {:.0} a second",
+                if on_gpu { "graphics card" } else { "processor" },
+                opened.width,
+                opened.height,
+                frames as f64 / secs
+            );
+        }
+        unsafe { MFShutdown() }.unwrap();
     }
 
     /// A 24-bit 4x2 BMP, all red.

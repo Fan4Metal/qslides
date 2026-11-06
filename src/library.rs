@@ -128,10 +128,7 @@ pub fn scan(
         .name("scan".into())
         .spawn(move || {
             let started = std::time::Instant::now();
-            let mut items = Vec::new();
-            for (root, folder) in folders.iter().enumerate() {
-                walk(folder, root, &mut items);
-            }
+            let items = list(&folders);
             log::info!(
                 "scanned {} folders: {} files in {:.0} ms",
                 folders.len(),
@@ -146,6 +143,20 @@ pub fn scan(
     if let Err(e) = spawned {
         log::warn!("cannot start the scan: {e}");
     }
+}
+
+/// The pictures and videos of `folders` and their subfolders, each file
+/// once: a folder of the library inside another one (`D:\Photos` and
+/// `D:\Photos\2024`) would show its files twice. A file found again keeps
+/// the first folder it was found in.
+fn list(folders: &[PathBuf]) -> Vec<Item> {
+    let mut items = Vec::new();
+    for (root, folder) in folders.iter().enumerate() {
+        walk(folder, root, &mut items);
+    }
+    let mut seen = std::collections::HashSet::with_capacity(items.len());
+    items.retain(|i| seen.insert(i.path.as_os_str().to_string_lossy().to_lowercase()));
+    items
 }
 
 /// Add the pictures and videos of `dir` and its subfolders to `out`.
@@ -309,6 +320,32 @@ mod tests {
         names.sort();
         assert_eq!(names, ["a.jpg", "c.png", "d.mp4"]);
         assert!(items.iter().all(|i| i.root == 3));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folder of the library inside another one: its files once, kept
+    /// under the folder that comes first.
+    #[test]
+    fn nested_folders_list_each_file_once() {
+        let dir = std::env::temp_dir().join(format!("qslides_nested_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("2024")).unwrap();
+        for f in ["a.jpg", "2024/b.jpg"] {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        // The inner folder written with other case and a trailing slash.
+        let inner = PathBuf::from(format!("{}\\", dir.join("2024").display()).to_uppercase());
+        let items = list(&[inner, dir.clone()]);
+        let mut found: Vec<(String, usize)> = items
+            .iter()
+            .map(|i| {
+                (
+                    i.path.file_name().unwrap().to_string_lossy().to_lowercase(),
+                    i.root,
+                )
+            })
+            .collect();
+        found.sort();
+        assert_eq!(found, [("a.jpg".into(), 1), ("b.jpg".into(), 0)]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

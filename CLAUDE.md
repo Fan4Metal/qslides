@@ -1,0 +1,60 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project
+
+qslides is a Windows-only desktop photo frame: a frameless widget that shows a slideshow of the pictures and silent videos found in the folders of its library (subfolders included). Written in Rust with egui/eframe 0.36 (glow). Priorities: a small, quiet widget (little CPU between slides), Windows' own codecs (WIC for pictures, Media Foundation for videos, nothing shipped beside the exe), start-up speed. `README.md` / `README.ru.md` are the user-facing docs and must be kept in sync (both languages, cross-linked, formal tone, no imperatives).
+
+The display name and the identifier are the same, `qslides`: the UI, the window title, the READMEs, the installer, `%APPDATA%\qslides`, `%LOCALAPPDATA%\Programs\qslides`, `qslides_<ver>_Setup.exe`, the Cargo package, `qslides.exe`, the GitHub repo `Fan4Metal/qslides`, the Run value.
+
+The original spec (`local/SPEC.md`, not committed): a desktop widget with a library of several folders scanned recursively, a slideshow of pictures and videos without sound, a borderless window with size presets of aspect ratios; start with Windows, always on top, slide time and order, tray only (no taskbar button). Decisions taken with the user: videos play to the end or as long as a picture (a setting); orders by name, by date, random; a picture fits whole or fills the window (a setting, fit by default).
+
+## Commands
+
+```
+uv run build.py                  # closes a qslides.exe running from target\, then cargo build --release
+cargo build --release            # target\release\qslides.exe (fat LTO)
+cargo test                       # unit tests (playlist orders, natural sort, scan, EXIF orientation, WIC decoding, menu, settings, window proportions)
+cargo clippy --all-targets       # must stay warning-free
+cargo fmt                        # width 100
+python tools/make_release.py     # tests, release build, dist\qslides_<ver>_Setup.exe (Inno Setup 6, tools/setup.iss) and _portable.zip
+python tools/make_release.py --no-tests --install   # the same, then installs it silently over the installed copy
+.\target\release\qslides.exe --export-icon file.ico   # the app icon for the installer / the README
+$env:RUST_LOG="qslides=debug"    # what is shown and decoded, with timings (stderr)
+$env:QSLIDES_VIDEO="C:\v.mp4"; cargo test video_file -- --ignored --nocapture   # decode a real video, print frames and speed
+cargo test update -- --ignored   # asks GitHub for the latest release for real
+```
+
+Releases: pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`, which runs `make_release.py` and publishes both files; the tag must equal the version in `Cargo.toml`. Creating or pushing a tag publishes a public release, so do it only when the user asks. `tools/setup.iss` installs per user and removes the Run value on uninstallation. `.cargo/config.toml` links the CRT statically. These scripts mirror those of disk_flashlight, qview, qrec and metalmd; keep them in step.
+
+Trying a change: `cargo test` and `cargo clippy --all-targets`, then `uv run build.py` and run `target\release\qslides.exe`; the user runs the widget all day, so finish with `python tools/make_release.py --no-tests --install` (it closes the installed copy first, so its settings are saved). To try a library without touching the user's settings, copy the exe into a folder with an `app.ron` (portable mode, may hold `{"interval": "3", "video": "interval"}`) and a `library.txt` naming a test folder.
+
+Toolchain: stable MSVC Rust plus VS 2022 Build Tools. In the Bash tool, `cargo` is not on PATH; prefix commands with `export PATH="$HOME/.cargo/bin:$PATH"`. A running `qslides.exe` locks the release binary; `build.py` closes it first. Heredocs containing Rust code break the Bash tool; write source files with the Write tool.
+
+## Architecture
+
+- **`main.rs`**: arguments (`--export-icon`, `--version`, `--help`), the panic hook, one instance (`instance::forward`), the library read and its scan started before the window is made, `NativeOptions` (frameless, resizable, drag and drop, min 120x90, default 480x320), `eframe::run_native`.
+- **`app.rs`**: the eframe `App`. One slide on the screen (`current`: a picture's texture or a playing video) and the next one getting ready (`upcoming`: the loader's job, or a video started with its first frame awaited), so slides change at once with a 0.7 s cross-fade. `step` counts moves through the playlist; a slide and the upcoming one carry their step, which tells "the next one" from "the one the show waits for" (`wanted`, `install`). The slide's `Clock` leaves pauses out. Frame order matters: the video is pumped before `advance_if_due`, so its end moves the show on in the same frame (it used to wait for an unrelated repaint), and pumped again after `install`, since a waiting decoder thread asks for no repaint. Repaints are scheduled with `request_repaint_after` (the slide's remaining time, the next video frame, the buttons' fade), so a picture on the screen costs nothing. Input: drag anywhere moves the window (`frameless::drag_area`), edges resize it, a right click opens the menu, a double click or Enter opens the file, the wheel and the arrows go through the files, Space pauses, F1 About, F5 rescans, Ctrl+O adds a folder, folders dropped on the window join the library. The Previous/Pause/Next buttons fade in while the pointer moves.
+- **`library.rs`**: the folders (`library.txt` next to the settings file, one per line, kept apart from the settings as user data), the recursive scan on a thread (hidden/system folders and reparse points skipped), the extensions, natural path order (Explorer's: digit runs as numbers, folder by folder).
+- **`show.rs`**: the choices (order, fit, video length, aspect presets, intervals) and the `Playlist`: name order keeps the library's folder order, date order by modification time, random is a Fisher–Yates shuffle per round (xorshift, no crate) that never starts a round with the file just shown. A file that cannot be decoded is dropped from the playlist until the next scan.
+- **`media.rs`**: WIC decoding (`windows` crate) scaled down to the monitor's long side with the Fant scaler, EXIF orientation applied by hand on the scaled pixels (`orient`; WIC's flip-rotator order is not documented); Media Foundation source reader with advanced video processing: only the first video stream selected (no sound ever), RGB32 output scaled by the video processor to fit 1920, frames through a `sync_channel(3)` (the thread waits while the UI does not take them; dropping `Video` stops it), a looped video's times keep growing. A 1280x958 H.264 decodes at ~270 frames a second.
+- **`loader.rs`**: one thread with COM decodes the next picture and makes its texture (mipmapped: the window is usually much smaller than the screen); only the latest request counts.
+- **`menu.rs`**: the widget's only control panel is a native Win32 popup menu (`TrackPopupMenuEx`), because an egui menu cannot leave a small window. Radio groups use `CheckMenuRadioItem` over contiguous ids; a path's `&` is doubled. The same menu comes up from the tray icon. A newer release found by the update check is offered at its top.
+- **`tray.rs`**: the notification-area icon while "Only in the tray" is on (metalamp's); its messages arrive in the window subclass.
+- **`win.rs`**: the family's helpers plus the window subclass (`hook_window`: tray clicks and menu, `TaskbarCreated`, `TaskbarButtonCreated`, and `WM_SIZING` keeping the aspect preset while the window is sized), `reshaped` (a preset applied: same area and centre, inside the work area), the taskbar button through `ITaskbarList` (winit takes `with_taskbar` only at creation; Explorer re-adds the button when eframe shows the window or Explorer restarts, so it is deleted again on `TaskbarButtonCreated` and on uncloak), the Run key (`autostart` counts only a value naming this exe, so an installed and a portable copy do not mistake each other's), `show_in_folder`, `screen_side`.
+- **`instance.rs`**: one widget per exe (metalamp's without paths): a second start brings the first forward and exits; names carry a hash of the exe path.
+- **`frameless.rs`**: metalamp's drag area and resize strips for the frameless window (DWM keeps its shadow; Windows 11 rounds the corners, `win::round_corners`).
+- **`caption.rs`**: the window handle, `DWMWA_USE_IMMERSIVE_DARK_MODE` (About's caption), `DWMWA_CLOAK` (no white flash at start: cloaked for three painted frames).
+- **`ui/`**: `app_icon`, `round_button` (the buttons over the picture), `OwnWindow` (metalamp's: a viewport made hidden, found by title, cloaked, owned by the widget, uncloaked after three frames); `ui/about.rs` About as its own window (the widget is often smaller than About), its height measured from its content; `ui/start.rs` the start screen scaled to the window (name and version only when the window is at least 220 points high); `ui/icons.rs` the family's painted icons.
+- **`icon.rs`**: the app icon, a wooden photo frame with a landscape and three slideshow dots (left out below 40 px), edges smoothed over one pixel of each layer (`sample(x, y, px)`).
+- **`update.rs`**: the opt-in update check (off by default, once a day at start-up, "Check now" in About).
+
+## Conventions
+
+- Every user-visible string goes through `tr!("English", "Русский")` (`i18n.rs`), including the native menu's labels (built anew each time it opens). Log messages, CLI output and technical errors stay English.
+- Persisted state (eframe storage, `app.ron`): `language` (`system`/`en`/`ru`), `check_updates`, `last_update_check` (Unix seconds), `interval` (seconds, 1..86400), `order` (`name`/`date`/`random`), `fit` (`fit`/`fill`), `video` (`whole`/`interval`), `aspect` (`free` or `W:H` of `show::ASPECTS`), `on_top`, `tray_only`, `last_file` (the show resumes from it); eframe persists the window geometry. The folders are in `library.txt`; starting with Windows is the `qslides` value of `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. The theme is always dark (a photo frame), so there is no theme setting.
+- The version comes from `Cargo.toml` (`main::VERSION`, shown in About). Between releases it is the next version with `-dev`; `build.rs` appends `git describe --tags --always`. Release: drop `-dev`, commit `Version X.Y.Z`, tag `vX.Y.Z`, then set `X.Y.(Z+1)-dev`.
+- The release profile has `panic = "abort"` and no console: a panic shows a message box (`main::install_panic_hook`). Sizes read from files may be 0 (checked in `media.rs`); pictures are capped by `max_texture_side`.
+- Commits in this repository end with a `Co-Authored-By:` trailer naming the Claude model doing the work, e.g. `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` (the user's choice for this repo).
+- GUI checks: the OpenGL client area cannot be captured with `PrintWindow` on an NVIDIA machine, but `Graphics.CopyFromScreen` of the window's rectangle from a DPI-aware process shows it; keys can be posted with `PostMessage(WM_KEYDOWN/WM_KEYUP)` (F1 opens About). A launched window takes the focus: warn the user before launching test windows and before any simulated input, and close test windows with `taskkill /PID` (WM_CLOSE, which saves the settings). The native menu and mouse behaviour are checked by the user.

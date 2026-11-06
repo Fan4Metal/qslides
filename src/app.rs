@@ -857,11 +857,29 @@ impl App {
         crate::frameless::resize_edges(ui, true);
 
         let fading = self.fade.as_ref().map(|(t, at)| (t.clone(), at.elapsed()));
+        let shown = self.current.as_ref().map(|s| s.content.texture().clone());
         let t = match fading {
-            Some((ref texture, since)) if since < FADE => {
+            Some((ref old, since)) if since < FADE => {
                 let t = since.as_secs_f32() / FADE.as_secs_f32();
                 let t = t * t * (3.0 - 2.0 * t);
-                self.paint_texture(&painter, texture, area, 1.0 - t);
+                match &shown {
+                    // The old picture whole under the new one coming in:
+                    // t·new + (1−t)·old. Faded out as well (1−t) under
+                    // t·new, they summed to less, the change dimmed by a
+                    // quarter in its middle. Where the new one does not
+                    // reach (the bars of a picture fitted whole), the old
+                    // one darkens.
+                    Some(new) => {
+                        self.paint_texture(&painter, old, area, 1.0);
+                        let [w, h] = new.size().map(|n| n.max(1) as f32);
+                        let (rect, _) = placed(vec2(w, h), area, self.fit);
+                        let dark = Color32::from_black_alpha((t * 255.0).round() as u8);
+                        for bar in outside(area, rect) {
+                            painter.rect_filled(bar, 0.0, dark);
+                        }
+                    }
+                    None => self.paint_texture(&painter, old, area, 1.0 - t),
+                }
                 soon(Duration::from_millis(16));
                 t
             }
@@ -870,8 +888,8 @@ impl App {
                 1.0
             }
         };
-        if let Some(slide) = &self.current {
-            self.paint_texture(&painter, slide.content.texture(), area, t);
+        if let Some(texture) = &shown {
+            self.paint_texture(&painter, texture, area, t);
         } else if self.fade.is_none() {
             let hint = if self.folders.is_empty() {
                 tr!(
@@ -1067,6 +1085,31 @@ fn placed(size: egui::Vec2, area: Rect, fit: Fit) -> (Rect, Rect) {
     }
 }
 
+/// The parts of `area` outside `inner`: the bars above and below it across
+/// the whole width, those left and right of it between them; empty ones
+/// left out.
+fn outside(area: Rect, inner: Rect) -> Vec<Rect> {
+    let inner = inner.intersect(area);
+    if !inner.is_positive() {
+        return vec![area];
+    }
+    [
+        Rect::from_min_max(area.min, pos2(area.max.x, inner.min.y)),
+        Rect::from_min_max(pos2(area.min.x, inner.max.y), area.max),
+        Rect::from_min_max(
+            pos2(area.min.x, inner.min.y),
+            pos2(inner.min.x, inner.max.y),
+        ),
+        Rect::from_min_max(
+            pos2(inner.max.x, inner.min.y),
+            pos2(area.max.x, inner.max.y),
+        ),
+    ]
+    .into_iter()
+    .filter(|r| r.is_positive())
+    .collect()
+}
+
 impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0, 0.0, 0.0, 1.0]
@@ -1177,6 +1220,26 @@ mod tests {
         let (rect, uv) = placed(vec2(100.0, 100.0), area, Fit::Fill);
         assert_eq!(rect, area);
         assert_eq!(uv, Rect::from_min_max(pos2(0.0, 0.25), pos2(1.0, 0.75)));
+    }
+
+    #[test]
+    fn bars_around_a_picture() {
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 200.0));
+        // Fitted whole, bars left and right.
+        let inner = Rect::from_min_size(pos2(100.0, 0.0), vec2(200.0, 200.0));
+        assert_eq!(
+            outside(area, inner),
+            [
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(100.0, 200.0)),
+                Rect::from_min_max(pos2(300.0, 0.0), pos2(400.0, 200.0)),
+            ]
+        );
+        // Filling the window: none.
+        assert!(outside(area, area).is_empty());
+        // Bars all round: their area and the picture's make the window's.
+        let inner = Rect::from_min_size(pos2(50.0, 20.0), vec2(100.0, 60.0));
+        let bars: f32 = outside(area, inner).iter().map(|r| r.area()).sum();
+        assert_eq!(bars + inner.area(), area.area());
     }
 
     #[test]

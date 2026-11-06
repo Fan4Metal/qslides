@@ -21,7 +21,7 @@ qslides is a small widget for the Windows desktop that works as a photo frame. S
 
 - **A library of folders**: any number of folders, scanned with all their subfolders (see [Library](#library)).
 - **Pictures and videos**: JPEG, PNG, GIF, BMP, TIFF, JPEG XR, and HEIC, AVIF and WebP when their extensions from the Microsoft Store are installed; MP4, MOV, MKV, AVI, WMV, WebM and other videos that Windows plays, without sound.
-- **Slideshow settings**: the time each slide stays (3 seconds to an hour), the order (by name, by date, random), a picture fitted whole or filling the window, videos played to the end or as long as pictures (see [Slideshow](#slideshow)).
+- **Slideshow settings**: the time each slide stays (1 second to an hour), the order (by name, by date, random), a picture fitted whole or filling the window, videos played to the end or as long as pictures (see [Slideshow](#slideshow)).
 - **A frameless window** with presets of its proportions, from 16:9 to 9:16, kept while the window is sized.
 - **Start with Windows, always on top, only in the tray**: each is one switch of the menu.
 - **Quiet**: between slides the program does no work; the next slide is decoded in advance, and slides change with a short cross-fade.
@@ -48,7 +48,7 @@ Everything else is in the menu of the right mouse button, which is also opened b
 | Part | What it does |
 |---|---|
 | Buttons at the top | **Previous**, **Pause**, **Next**; **Open the file** in its program, **Show in its folder** in Explorer |
-| **Show each for** | A slider for the time a slide stays, from 3 seconds to 1 hour |
+| **Show each for** | A slider for the time a slide stays, from 1 second to 1 hour |
 | **Order** | **By name**, **By date**, **Random** |
 | **Picture** | **Fit whole** or **Fill the window** |
 | **Videos** | **To the end** or **As long as pictures** |

@@ -143,9 +143,9 @@ pub fn aspect_from_name(name: &str) -> Option<Option<(u32, u32)>> {
 
 /// The times a slide can stay, in seconds: the slider's steps, finer at
 /// the short end, where a second is felt, than at the long one.
-pub const INTERVALS: [u32; 27] = [
-    3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 25, 30, 40, 45, 60, 90, 120, 180, 240, 300, 420, 600, 900,
-    1200, 1800, 2700, 3600,
+pub const INTERVALS: [u32; 29] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 25, 30, 40, 45, 60, 90, 120, 180, 240, 300, 420, 600,
+    900, 1200, 1800, 2700, 3600,
 ];
 
 /// The step of [`INTERVALS`] nearest to `secs` (a setting written by hand
@@ -466,7 +466,8 @@ mod tests {
         assert!(INTERVALS.windows(2).all(|w| w[0] < w[1]));
         assert_eq!(INTERVALS[nearest_interval(10)], 10);
         assert_eq!(INTERVALS[nearest_interval(11)], 10);
-        assert_eq!(INTERVALS[nearest_interval(1)], 3);
+        assert_eq!(INTERVALS[nearest_interval(0)], 1);
+        assert_eq!(INTERVALS[nearest_interval(1)], 1);
         assert_eq!(INTERVALS[nearest_interval(86_400)], 3600);
         crate::i18n::set_lang(crate::i18n::Lang::En);
         assert_eq!(interval_label(45), "45 s");

@@ -140,6 +140,8 @@ impl AboutWindow {
                 format!("Автор: {authors}")
             ));
         }
+        // Who the program was thought of by.
+        ui.label(tr!("Idea: helldragon", "Идея: helldragon"));
         if !REPOSITORY.is_empty()
             && ui
                 .link(tr!("Homepage", "Сайт проекта"))

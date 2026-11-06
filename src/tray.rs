@@ -40,7 +40,9 @@ impl Tray {
         d
     }
 
-    /// Adds the icon (again, after Explorer restarted); whether it worked.
+    /// Adds the icon (again, after Explorer restarted); whether it is
+    /// there. At sign-in the shell may time out and refuse an icon it adds
+    /// all the same: an icon already there is then taken as added.
     pub fn add(&mut self) -> bool {
         let mut d = self.data();
         d.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
@@ -48,7 +50,8 @@ impl Tray {
         d.hIcon = self.icon as _;
         put_tip(&mut d, &self.tip);
         // SAFETY: a filled NOTIFYICONDATAW of this window.
-        let added = unsafe { Shell_NotifyIconW(NIM_ADD, &d) } != 0;
+        let added = unsafe { Shell_NotifyIconW(NIM_ADD, &d) } != 0
+            || unsafe { Shell_NotifyIconW(NIM_MODIFY, &d) } != 0;
         if added {
             d.Anonymous.uVersion = NOTIFYICON_VERSION_4;
             unsafe { Shell_NotifyIconW(NIM_SETVERSION, &d) };

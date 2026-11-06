@@ -42,6 +42,8 @@ const CONTROLS_FOR: Duration = Duration::from_millis(2500);
 /// Videos are decoded no larger than this (their processor scales them):
 /// a larger frame costs more to convert and upload than it shows.
 const VIDEO_SIDE: u32 = 1920;
+/// How often a tray icon the shell refused is asked for again.
+const TRAY_RETRY: Duration = Duration::from_secs(3);
 
 /// The time a slide has been up, the pauses left out.
 struct Clock {
@@ -187,6 +189,8 @@ pub struct App {
     on_top: bool,
     tray_only: bool,
     tray: Option<crate::tray::Tray>,
+    /// When to ask again for a tray icon the shell refused.
+    tray_retry: Option<Instant>,
     about: AboutWindow,
     updates: Updates,
     /// The window's handle; `None` off Windows.
@@ -254,16 +258,12 @@ impl App {
                 egui::WindowLevel::AlwaysOnTop,
             ));
         }
-        let tray = match (settings.tray_only, hwnd) {
-            (true, Some(hwnd)) => crate::tray::Tray::new(hwnd, crate::APP_NAME),
-            _ => None,
-        };
         let mut updates = Updates::new(settings.check_updates, settings.last_update_check);
         updates.start_if_due(ctx);
         let mut about = AboutWindow::default();
         about.lang = settings.language;
         let scanning = !folders.is_empty();
-        Self {
+        let mut app = Self {
             folders,
             playlist: Playlist::new(settings.order),
             resume: settings.last_file.clone(),
@@ -284,7 +284,8 @@ impl App {
             aspect: settings.aspect,
             on_top: settings.on_top,
             tray_only: settings.tray_only,
-            tray,
+            tray: None,
+            tray_retry: None,
             about,
             updates,
             hwnd,
@@ -297,7 +298,9 @@ impl App {
             dialog: Default::default(),
             modal: false,
             autostart: false,
-        }
+        };
+        app.make_tray();
+        app
     }
 
     /// Show the window once it has painted `PAINTED_TO_SHOW` frames.
@@ -703,11 +706,12 @@ impl App {
                 self.tray_only = !self.tray_only;
                 if let Some(hwnd) = self.hwnd {
                     crate::win::set_taskbar_button(hwnd, !self.tray_only);
-                    self.tray = if self.tray_only {
-                        crate::tray::Tray::new(hwnd, crate::APP_NAME)
-                    } else {
-                        None
-                    };
+                }
+                if self.tray_only {
+                    self.make_tray();
+                } else {
+                    self.tray = None;
+                    self.tray_retry = None;
                 }
             }
             Cmd::About => self.about.toggle(),
@@ -719,16 +723,51 @@ impl App {
         }
     }
 
+    /// The tray icon while "Only in the tray" is on and there is none yet.
+    /// At sign-in the shell may refuse it: tried again every
+    /// `TRAY_RETRY` (and when Explorer says it has started), since without
+    /// it the widget has neither a taskbar button nor an icon.
+    fn make_tray(&mut self) {
+        let Some(hwnd) = self.hwnd.filter(|_| self.tray_only && self.tray.is_none()) else {
+            return;
+        };
+        self.tray = crate::tray::Tray::new(hwnd, crate::APP_NAME);
+        if self.tray.is_none() {
+            log::info!("the tray icon was refused, trying again");
+            self.tray_retry = Some(Instant::now() + TRAY_RETRY);
+        } else {
+            self.tray_retry = None;
+        }
+    }
+
+    /// Try the refused tray icon again when it is time; the time until then.
+    fn retry_tray(&mut self) -> Option<Duration> {
+        let at = self.tray_retry?;
+        if !self.tray_only || self.tray.is_some() {
+            self.tray_retry = None;
+            return None;
+        }
+        let now = Instant::now();
+        if now < at {
+            return Some(at - now);
+        }
+        self.make_tray();
+        self.tray_retry.map(|at| at.saturating_duration_since(now))
+    }
+
     /// What the window's subclass queued: the tray icon, Explorer.
     fn take_hooked(&mut self, ctx: &egui::Context) {
         for hooked in crate::win::take_hooked() {
             match hooked {
                 crate::win::Hooked::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-                crate::win::Hooked::TrayCreated => {
-                    if let Some(tray) = &mut self.tray {
+                crate::win::Hooked::TrayCreated => match &mut self.tray {
+                    Some(tray) => {
                         tray.add();
                     }
-                }
+                    // Refused at start-up, Explorer not ready yet (a start
+                    // with Windows): made now.
+                    None => self.make_tray(),
+                },
                 crate::win::Hooked::TaskbarButton => {
                     if self.tray_only
                         && let Some(hwnd) = self.hwnd
@@ -1088,6 +1127,9 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
         self.tray_tip();
+        if let Some(d) = self.retry_tray() {
+            wake = Some(wake.map_or(d, |w| w.min(d)));
+        }
         if let Some(d) = wake {
             ctx.request_repaint_after(d);
         }

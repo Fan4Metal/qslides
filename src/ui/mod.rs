@@ -79,6 +79,27 @@ pub fn round_button(
     }
 }
 
+/// The cross over the picture that ends the program: a round button as
+/// [`round_button`], red under the pointer, as the close buttons of
+/// Windows are.
+pub fn close_button(ui: &mut Ui, center: Pos2, radius: f32, opacity: f32, tip: &str) -> Response {
+    let rect = egui::Rect::from_center_size(center, egui::vec2(radius * 2.0, radius * 2.0));
+    let response = ui.interact(rect, ui.id().with("close_button"), Sense::click());
+    let fill = if response.hovered() {
+        Color32::from_rgba_unmultiplied(0xc4, 0x2b, 0x1c, (230.0 * opacity) as u8)
+    } else {
+        Color32::from_black_alpha((140.0 * opacity) as u8)
+    };
+    ui.painter().circle_filled(center, radius, fill);
+    let ink = Color32::from_white_alpha((235.0 * opacity) as u8);
+    icons::paint(ui.painter(), Icon::Close, center, radius * 1.1, ink, fill);
+    if opacity > 0.5 {
+        response.on_hover_text(tip)
+    } else {
+        response
+    }
+}
+
 /// A window of the program's own (an immediate viewport: About) shown
 /// without a white flash: Windows shows a new window white until its first
 /// frame is presented. It is made hidden (`with_visible(false)`), found by

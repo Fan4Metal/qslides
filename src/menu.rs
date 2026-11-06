@@ -9,8 +9,8 @@
 //!
 //! It is a panel rather than a list of submenus: the controls of the show
 //! at the top, the settings with a slider for the time a slide stays, the
-//! library's folders under a header that opens, the switches, About and
-//! Exit.
+//! library's folders under a header that opens, the switches and About.
+//! Exit is not here: the widget has a cross of its own.
 
 use std::path::PathBuf;
 
@@ -45,12 +45,11 @@ pub enum Cmd {
     About,
     /// Open the page of the newer release.
     Update,
-    Exit,
 }
 
 impl Cmd {
     /// Whether the menu closes after it: a command that opens something
-    /// else or ends the program. The controls of the show and the settings
+    /// else. The controls of the show and the settings
     /// leave it open, so that their effect is seen and more can be changed.
     pub fn closes_menu(&self) -> bool {
         matches!(
@@ -61,7 +60,6 @@ impl Cmd {
                 | Cmd::OpenFolder(_)
                 | Cmd::About
                 | Cmd::Update
-                | Cmd::Exit
         )
     }
 }
@@ -383,20 +381,14 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
     );
     ui.separator();
 
-    ui.horizontal(|ui| {
-        let about = tr!(
-            format!("About {}", crate::APP_NAME),
-            format!("О программе {}", crate::APP_NAME)
-        );
-        if ui.button(about).on_hover_text("F1").clicked() {
-            cmds.push(Cmd::About);
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button(tr!("Exit", "Выход")).clicked() {
-                cmds.push(Cmd::Exit);
-            }
-        });
-    });
+    // No Exit here: the widget has its own cross, shown with the pointer.
+    let about = tr!(
+        format!("About {}", crate::APP_NAME),
+        format!("О программе {}", crate::APP_NAME)
+    );
+    if ui.button(about).on_hover_text("F1").clicked() {
+        cmds.push(Cmd::About);
+    }
 }
 
 #[cfg(test)]

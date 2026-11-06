@@ -713,7 +713,6 @@ impl App {
                     crate::win::shell_open(crate::update::release_url(tag));
                 }
             }
-            Cmd::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         }
     }
 
@@ -914,6 +913,28 @@ impl App {
             let r = 9.0;
             let center = Pos2::new(area.left() + r + 8.0, area.top() + r + 8.0);
             crate::ui::round_button(ui, Icon::Pause, center, r, 0.8, "");
+        }
+
+        // The cross that ends the program, in the top right corner, with
+        // the pointer; also over the start screen, where there are no other
+        // buttons. Just inside the corner's resize square, so that most of
+        // the corner still sizes the window.
+        let r = (area.height() * 0.06).clamp(10.0, 14.0);
+        let center = pos2(area.right() - r - 10.0, area.top() + r + 10.0);
+        // It stays while the pointer rests on it, moving or not.
+        let on_cross = ctx
+            .input(|i| i.pointer.hover_pos())
+            .is_some_and(|p| p.distance(center) <= r + 4.0);
+        let close_opacity = ctx.animate_bool_with_time(
+            ui.id().with("close"),
+            hovering && (recent || on_cross),
+            0.2,
+        );
+        if close_opacity > 0.0 && area.height() >= 40.0 && area.width() >= 60.0 {
+            let tip = tr!("Exit", "Выход");
+            if crate::ui::close_button(ui, center, r, close_opacity, tip).clicked() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
         }
 
         if drag.double_clicked() {

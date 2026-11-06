@@ -63,7 +63,7 @@ Only one copy of the program runs at a time: starting it again brings the window
 
 ### Library
 
-Folders are added with **Folders → Add a folder…** (`Ctrl+O`) or by dropping them on the window; a file dropped on the window adds its folder. The library is scanned at start-up, after each change and with **Look for new files** (`F5`). Hidden and system folders, links and junctions are skipped.
+Folders are added with **Folders → Add a folder…** (`Ctrl+O`) or by dropping them on the window; a file dropped on the window adds its folder. The library is scanned at start-up, after each change and with **Look for new files** (`F5`). Hidden and system folders, links and junctions are skipped. A folder of the library that lies inside another one adds no file twice.
 
 <details><summary>Where the library is kept</summary>
 

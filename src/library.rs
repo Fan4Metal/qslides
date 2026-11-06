@@ -150,13 +150,15 @@ pub fn scan(
 
 /// Add the pictures and videos of `dir` and its subfolders to `out`.
 /// Hidden and system folders (`$RECYCLE.BIN`, `System Volume Information`)
-/// are skipped, and so are links and junctions, which could lead round in
-/// a loop.
+/// are skipped, and so are folders that are links or junctions, which
+/// could lead round in a loop. Only those: OneDrive's folders and files
+/// are reparse points too (of the cloud's tags, which are not links), and
+/// a file leads nowhere.
 fn walk(dir: &Path, root: usize, out: &mut Vec<Item>) {
     use std::os::windows::fs::MetadataExt;
     const HIDDEN: u32 = 0x2;
     const SYSTEM: u32 = 0x4;
-    const REPARSE_POINT: u32 = 0x400;
+    const DIRECTORY: u32 = 0x10;
     let Ok(entries) = std::fs::read_dir(dir) else {
         log::debug!("cannot read {}", dir.display());
         return;
@@ -165,12 +167,12 @@ fn walk(dir: &Path, root: usize, out: &mut Vec<Item>) {
     for entry in entries.flatten() {
         let Ok(meta) = entry.metadata() else { continue };
         let attributes = meta.file_attributes();
-        if attributes & REPARSE_POINT != 0 {
-            continue;
-        }
         let path = entry.path();
-        if meta.is_dir() {
-            if attributes & (HIDDEN | SYSTEM) == 0 {
+        if attributes & DIRECTORY != 0 {
+            // A link: a reparse point of a name-surrogate tag (symbolic
+            // links, junctions), which std tells from the cloud's.
+            let link = entry.file_type().is_ok_and(|t| t.is_symlink());
+            if !link && attributes & (HIDDEN | SYSTEM) == 0 {
                 subdirs.push(path);
             }
         } else if let Some(kind) = kind_of(&path) {
@@ -307,6 +309,31 @@ mod tests {
         names.sort();
         assert_eq!(names, ["a.jpg", "c.png", "d.mp4"]);
         assert!(items.iter().all(|i| i.root == 3));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A junction back to the folder above (made without rights by
+    /// `mklink /J`) is not followed round; the folder's files are found.
+    #[test]
+    fn junctions_are_not_followed() {
+        let dir = std::env::temp_dir().join(format!("qslides_junction_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("sub").join("a.jpg"), b"x").unwrap();
+        let made = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(dir.join("sub").join("loop"))
+            .arg(&dir)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+        let mut items = Vec::new();
+        walk(&dir, 0, &mut items);
+        assert_eq!(items.len(), 1, "{items:?}");
+        // The junction itself goes first: removing the folder must not go
+        // through it.
+        std::fs::remove_dir(dir.join("sub").join("loop")).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

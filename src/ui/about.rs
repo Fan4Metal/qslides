@@ -54,8 +54,17 @@ impl AboutWindow {
 
     /// Draws the window while it is open; closes it on its cross, Esc or
     /// Enter. A language picked in it is applied at once and left in
-    /// `lang` for the settings. `owner` is the widget's window.
-    pub fn show(&mut self, ctx: &egui::Context, owner: Option<isize>, updates: &mut Updates) {
+    /// `lang` for the settings. `owner` is the widget's window; `on_top`:
+    /// the widget is always on top, so About is too (an owned window is
+    /// kept above its owner, but a plain one was still covered by a
+    /// topmost owner).
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        owner: Option<isize>,
+        on_top: bool,
+        updates: &mut Updates,
+    ) {
         if !self.open {
             return;
         }
@@ -70,6 +79,11 @@ impl AboutWindow {
                 .with_resizable(false)
                 .with_minimize_button(false)
                 .with_maximize_button(false)
+                .with_window_level(if on_top {
+                    egui::WindowLevel::AlwaysOnTop
+                } else {
+                    egui::WindowLevel::Normal
+                })
                 .with_icon(crate::window_icon()),
         );
         let id = egui::ViewportId::from_hash_of("about");

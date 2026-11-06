@@ -412,6 +412,17 @@ pub fn place_popup(hwnd: isize, at: (i32, i32)) {
     }
 }
 
+/// Let window `hwnd` take the mouse and the keys, or not (the widget while
+/// its modal About is open).
+pub fn enable(hwnd: isize, on: bool) {
+    // Declared by hand, to spare the `Win32_UI_Input_KeyboardAndMouse` feature.
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn EnableWindow(hwnd: isize, enable: i32) -> i32;
+    }
+    unsafe { EnableWindow(hwnd, i32::from(on)) };
+}
+
 /// The pointer on the screen, in pixels.
 pub fn cursor_pos() -> (i32, i32) {
     use windows_sys::Win32::Foundation::POINT;

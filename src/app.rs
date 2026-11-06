@@ -201,6 +201,8 @@ pub struct App {
     /// The wheel turned since the last slide it changed.
     wheel: f32,
     menu: crate::menu::MenuWindow,
+    /// The widget is disabled for About (`win::enable`).
+    modal: bool,
     /// The folder dialog, on its own thread.
     dialog: crate::dialog::FolderDialog,
     /// Windows starts this copy at sign-in (read when the menu opens).
@@ -290,6 +292,7 @@ impl App {
             wheel: 0.0,
             menu: crate::menu::MenuWindow::default(),
             dialog: Default::default(),
+            modal: false,
             autostart: false,
         }
     }
@@ -1029,7 +1032,16 @@ impl eframe::App for App {
             wake = Some(wake.map_or(d, |w| w.min(d)));
         }
         let owner = self.hwnd;
-        self.about.show(&ctx, owner, &mut self.updates);
+        self.about.show(&ctx, owner, self.on_top, &mut self.updates);
+        // About is modal: the widget takes no clicks while it is open, and
+        // a click on it brings About forward (Windows does that for the
+        // enabled window a disabled owner owns).
+        if self.about.open != self.modal
+            && let Some(hwnd) = self.hwnd
+        {
+            self.modal = self.about.open;
+            crate::win::enable(hwnd, !self.modal);
+        }
         let state = self.menu_state();
         let cmds = self.menu.show(&ctx, owner, &state);
         if !cmds.is_empty() {

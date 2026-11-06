@@ -199,6 +199,9 @@ pub struct App {
     pointer_moved: Option<Instant>,
     /// The wheel turned since the last slide it changed.
     wheel: f32,
+    /// The right button went down over the window: the menu opens when it
+    /// is let go.
+    menu_press: bool,
     menu: crate::menu::MenuWindow,
     /// The widget is disabled for About (`win::enable`).
     modal: bool,
@@ -289,6 +292,7 @@ impl App {
             start_icon: None,
             pointer_moved: None,
             wheel: 0.0,
+            menu_press: false,
             menu: crate::menu::MenuWindow::default(),
             dialog: Default::default(),
             modal: false,
@@ -938,7 +942,20 @@ impl App {
         if drag.double_clicked() {
             self.run(Cmd::OpenFile, &ctx);
         }
-        if drag.secondary_clicked() {
+        // As Windows' menus do (metalmpv's): the right button opens the
+        // menu when let go, however the pointer moves meanwhile (egui's
+        // click allows 6 points: a click on the move was lost).
+        let (right_pressed, right_down) = ctx.input(|i| {
+            (
+                i.pointer.button_pressed(egui::PointerButton::Secondary),
+                i.pointer.button_down(egui::PointerButton::Secondary),
+            )
+        });
+        if right_pressed {
+            self.menu_press = drag.contains_pointer();
+        }
+        if self.menu_press && !right_down {
+            self.menu_press = false;
             self.open_menu(crate::win::cursor_pos());
         }
         // The wheel goes through the files, a notch a file.

@@ -11,6 +11,7 @@ mod i18n;
 
 mod app;
 mod caption;
+mod dialog;
 mod frameless;
 mod icon;
 mod instance;

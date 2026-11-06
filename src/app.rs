@@ -201,6 +201,8 @@ pub struct App {
     /// The wheel turned since the last slide it changed.
     wheel: f32,
     menu: crate::menu::MenuWindow,
+    /// The folder dialog, on its own thread.
+    dialog: crate::dialog::FolderDialog,
     /// Windows starts this copy at sign-in (read when the menu opens).
     autostart: bool,
 }
@@ -287,6 +289,7 @@ impl App {
             pointer_moved: None,
             wheel: 0.0,
             menu: crate::menu::MenuWindow::default(),
+            dialog: Default::default(),
             autostart: false,
         }
     }
@@ -604,7 +607,7 @@ impl App {
         self.menu.open_at(at);
     }
 
-    fn run(&mut self, cmd: Cmd, ctx: &egui::Context, frame: &eframe::Frame) {
+    fn run(&mut self, cmd: Cmd, ctx: &egui::Context) {
         let file = self.current.as_ref().map(|s| s.item.path.clone());
         match cmd {
             Cmd::Previous => self.previous(),
@@ -621,17 +624,10 @@ impl App {
                 }
             }
             Cmd::AddFolder => {
-                // In the UI thread: the show only stands still while the
-                // dialog is open (SKILL.md, the file dialog).
-                let dialog = rfd::FileDialog::new()
-                    .set_title(tr!(
-                        "Add a folder to the library",
-                        "Добавить папку в библиотеку"
-                    ))
-                    .set_parent(frame);
-                if let Some(folder) = dialog.pick_folder() {
-                    self.add_folder(folder);
-                }
+                // On a thread of its own: in a frame, it stopped the show
+                // while it was open. The folder comes back in `ui`.
+                let title = tr!("Add a folder to the library", "Добавить папку в библиотеку");
+                self.dialog.start(ctx, self.hwnd, title.to_owned());
             }
             Cmd::OpenFolder(i) => {
                 if let Some(f) = self.folders.get(i) {
@@ -740,7 +736,7 @@ impl App {
     }
 
     /// The keys of the widget (the About window takes its own).
-    fn keys(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+    fn keys(&mut self, ctx: &egui::Context) {
         let pressed = |key| ctx.input_mut(|i| i.consume_key(Modifiers::NONE, key));
         if pressed(Key::ArrowRight) || pressed(Key::PageDown) {
             self.next();
@@ -758,10 +754,10 @@ impl App {
             self.rescan();
         }
         if pressed(Key::Enter) {
-            self.run(Cmd::OpenFile, ctx, frame);
+            self.run(Cmd::OpenFile, ctx);
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::O)) {
-            self.run(Cmd::AddFolder, ctx, frame);
+            self.run(Cmd::AddFolder, ctx);
         }
     }
 
@@ -803,7 +799,7 @@ impl App {
     }
 
     /// The slide, the one fading out under it, and the buttons.
-    fn paint(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) -> Option<Duration> {
+    fn paint(&mut self, ui: &mut egui::Ui) -> Option<Duration> {
         let ctx = ui.ctx().clone();
         let area = ui.max_rect();
         let painter = ui.painter().clone();
@@ -917,7 +913,7 @@ impl App {
         }
 
         if drag.double_clicked() {
-            self.run(Cmd::OpenFile, &ctx, frame);
+            self.run(Cmd::OpenFile, &ctx);
         }
         if drag.secondary_clicked() {
             self.open_menu(crate::win::cursor_pos());
@@ -992,16 +988,19 @@ impl eframe::App for App {
         [0.0, 0.0, 0.0, 1.0]
     }
 
-    fn ui(&mut self, root_ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+    fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root_ui.ctx().clone();
         self.updates.poll();
         self.uncloak(&ctx);
         self.take_hooked();
         self.take_scans();
         if !self.about.open {
-            self.keys(&ctx, frame);
+            self.keys(&ctx);
         }
         self.dropped(&ctx);
+        if let Some(folder) = self.dialog.take() {
+            self.add_folder(folder);
+        }
 
         let done = self.loader.take();
         self.poll_upcoming(done, &ctx);
@@ -1023,7 +1022,7 @@ impl eframe::App for App {
         }
 
         let painted = egui::CentralPanel::no_frame()
-            .show(root_ui, |ui| self.paint(ui, frame))
+            .show(root_ui, |ui| self.paint(ui))
             .inner;
         if let Some(d) = painted {
             wake = Some(wake.map_or(d, |w| w.min(d)));
@@ -1034,7 +1033,7 @@ impl eframe::App for App {
         let cmds = self.menu.show(&ctx, owner, &state);
         if !cmds.is_empty() {
             for cmd in cmds {
-                self.run(cmd, &ctx, frame);
+                self.run(cmd, &ctx);
             }
             // Taken after this frame's show: the next frame acts on them.
             ctx.request_repaint();

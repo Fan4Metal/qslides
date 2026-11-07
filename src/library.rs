@@ -63,10 +63,59 @@ fn list_file() -> Option<PathBuf> {
 
 /// The library's folders, in the order they were added.
 pub fn load() -> Vec<PathBuf> {
-    list_file()
-        .and_then(|f| std::fs::read_to_string(f).ok())
-        .map(|text| parse(&text))
-        .unwrap_or_default()
+    let Some(file) = list_file() else {
+        return Vec::new();
+    };
+    match std::fs::read(&file) {
+        Ok(bytes) => parse(&decode(&bytes)),
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("cannot read {}: {e}", file.display());
+            }
+            Vec::new()
+        }
+    }
+}
+
+/// The text of `library.txt` as Notepad may have saved it: UTF-8 with or
+/// without its mark, UTF-16 with its mark, or in the system's ANSI code
+/// page. It is written back as UTF-8 without a mark.
+fn decode(bytes: &[u8]) -> String {
+    let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {
+        let units: Vec<u16> = rest.as_chunks::<2>().0.iter().map(|&c| unit(c)).collect();
+        String::from_utf16_lossy(&units)
+    };
+    if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        String::from_utf8_lossy(rest).into_owned()
+    } else if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+        utf16(rest, u16::from_le_bytes)
+    } else if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        utf16(rest, u16::from_be_bytes)
+    } else {
+        match std::str::from_utf8(bytes) {
+            Ok(text) => text.to_owned(),
+            Err(_) => ansi(bytes),
+        }
+    }
+}
+
+/// `bytes` in the system's ANSI code page.
+fn ansi(bytes: &[u8]) -> String {
+    use windows_sys::Win32::Globalization::{CP_ACP, MultiByteToWideChar};
+    let Ok(len) = i32::try_from(bytes.len()) else {
+        return String::from_utf8_lossy(bytes).into_owned();
+    };
+    // SAFETY: the pointers and lengths are those of `bytes` and `wide`.
+    unsafe {
+        let n = MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), len, std::ptr::null_mut(), 0);
+        if n <= 0 {
+            return String::from_utf8_lossy(bytes).into_owned();
+        }
+        let mut wide = vec![0u16; n as usize];
+        let n = MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), len, wide.as_mut_ptr(), n);
+        wide.truncate(n.max(0) as usize);
+        String::from_utf16_lossy(&wide)
+    }
 }
 
 fn parse(text: &str) -> Vec<PathBuf> {
@@ -302,6 +351,30 @@ mod tests {
             folders,
             [PathBuf::from(r"C:\Photos"), PathBuf::from(r"D:\Video")]
         );
+    }
+
+    /// As Notepad saves it: the first folder is not lost to a byte order
+    /// mark, and UTF-16 is read.
+    #[test]
+    fn folders_list_in_notepads_encodings() {
+        let want = [PathBuf::from(r"C:\Фото"), PathBuf::from(r"D:\Video")];
+        let text = "C:\\Фото\r\nD:\\Video\r\n";
+        let mut bom = vec![0xEF, 0xBB, 0xBF];
+        bom.extend_from_slice(text.as_bytes());
+        assert_eq!(parse(&decode(&bom)), want);
+        assert_eq!(parse(&decode(text.as_bytes())), want);
+        let mut le = vec![0xFF, 0xFE];
+        let mut be = vec![0xFE, 0xFF];
+        for u in text.encode_utf16() {
+            le.extend_from_slice(&u.to_le_bytes());
+            be.extend_from_slice(&u.to_be_bytes());
+        }
+        assert_eq!(parse(&decode(&le)), want);
+        assert_eq!(parse(&decode(&be)), want);
+        // Not UTF-8: the ANSI code page, whatever it is; the ASCII folder
+        // is read in any of them.
+        let ansi = b"C:\\\xC0\r\nD:\\Video\r\n";
+        assert_eq!(parse(&decode(ansi))[1], want[1]);
     }
 
     #[test]

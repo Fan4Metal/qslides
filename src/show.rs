@@ -203,6 +203,11 @@ pub struct Playlist {
     sequence: Vec<usize>,
     /// The place in `sequence` of the file shown.
     pos: usize,
+    /// Shuffled: the round before this one (Previous goes back into it)
+    /// and the next one, shuffled ahead so that its first file can be
+    /// decoded before the round ends.
+    prev_round: Option<Vec<usize>>,
+    next_round: Option<Vec<usize>>,
     rng: Rng,
 }
 
@@ -213,6 +218,8 @@ impl Playlist {
             order,
             sequence: Vec::new(),
             pos: 0,
+            prev_round: None,
+            next_round: None,
             rng: Rng::seeded(),
         }
     }
@@ -295,6 +302,8 @@ impl Playlist {
             Some(p) => self.pos = p,
             None => self.pos = 0,
         }
+        self.prev_round = None;
+        self.plan_next_round();
         found.is_some()
     }
 
@@ -306,13 +315,58 @@ impl Playlist {
         }
     }
 
+    /// Shuffle the round after this one (shuffled, of more than one file).
+    fn plan_next_round(&mut self) {
+        self.next_round = None;
+        if self.order == Order::Random && self.sequence.len() > 1 {
+            let mut next = self.sequence.clone();
+            self.shuffle(&mut next);
+            self.next_round = Some(next);
+            self.fix_next_round();
+        }
+    }
+
+    /// The next round does not start with the file this one ends with.
+    fn fix_next_round(&mut self) {
+        let Some(&last) = self.sequence.last() else {
+            return;
+        };
+        if let Some(next) = &mut self.next_round
+            && next.len() > 1
+            && next[0] == last
+        {
+            let j = 1 + self.rng.below(next.len() - 1);
+            next.swap(0, j);
+        }
+    }
+
+    /// Go on to the round shuffled ahead (`pos` set by the caller).
+    fn new_round(&mut self) {
+        if self
+            .next_round
+            .as_ref()
+            .is_none_or(|n| n.len() != self.sequence.len())
+        {
+            self.plan_next_round();
+        }
+        if let Some(next) = self.next_round.take() {
+            self.prev_round = Some(std::mem::replace(&mut self.sequence, next));
+        }
+        self.plan_next_round();
+    }
+
     pub fn current(&self) -> Option<&Item> {
         self.sequence.get(self.pos).map(|&i| &self.items[i])
     }
 
+    /// Shuffled, of more than one file: a round ends in another one.
+    fn rounds(&self) -> bool {
+        self.order == Order::Random && self.sequence.len() > 1
+    }
+
     /// The file after the current one, without moving on (to decode it
-    /// ahead). At the end of a shuffled round it is unknown until the next
-    /// round is shuffled: `None`.
+    /// ahead); at the end of a shuffled round, the first of the next one,
+    /// shuffled ahead.
     pub fn peek_next(&self) -> Option<&Item> {
         if self.sequence.is_empty() {
             return None;
@@ -320,10 +374,11 @@ impl Playlist {
         if self.pos + 1 < self.sequence.len() {
             return Some(&self.items[self.sequence[self.pos + 1]]);
         }
-        match self.order {
-            Order::Random if self.sequence.len() > 1 => None,
-            _ => Some(&self.items[self.sequence[0]]),
-        }
+        let first = match &self.next_round {
+            Some(next) if self.rounds() => next.first()?,
+            _ => &self.sequence[0],
+        };
+        Some(&self.items[*first])
     }
 
     /// Move on to the next file; after the last, round to the first (a new
@@ -335,36 +390,52 @@ impl Playlist {
         self.pos += 1;
         if self.pos >= self.sequence.len() {
             self.pos = 0;
-            if self.order == Order::Random && self.sequence.len() > 1 {
-                let last = *self.sequence.last().expect("not empty");
-                let mut sequence = std::mem::take(&mut self.sequence);
-                self.shuffle(&mut sequence);
-                if sequence[0] == last {
-                    let j = 1 + self.rng.below(sequence.len() - 1);
-                    sequence.swap(0, j);
-                }
-                self.sequence = sequence;
+            if self.rounds() {
+                self.new_round();
             }
         }
         self.current()
     }
 
-    /// Back to the file before (in a shuffled round, the one shown before).
+    /// Back to the file before: in a shuffled show, the one shown before,
+    /// at the start of a round the last of the round before (once: one
+    /// round is kept).
     pub fn back(&mut self) -> Option<&Item> {
         if self.sequence.is_empty() {
             return None;
+        }
+        if self.pos == 0
+            && self.rounds()
+            && let Some(prev) = self.prev_round.take().filter(|p| !p.is_empty())
+        {
+            // This round, Next going into it again as it was.
+            self.next_round = Some(std::mem::replace(&mut self.sequence, prev));
+            self.pos = self.sequence.len() - 1;
+            return self.current();
         }
         self.pos = self.pos.checked_sub(1).unwrap_or(self.sequence.len() - 1);
         self.current()
     }
 
     /// Drop the current file from the show (it cannot be decoded): the
-    /// next one takes its place.
+    /// next one takes its place (at the end of a shuffled round, the first
+    /// of a new round, as `advance` goes on).
     pub fn remove_current(&mut self) {
-        if self.pos < self.sequence.len() {
-            self.sequence.remove(self.pos);
-            if self.pos >= self.sequence.len() {
-                self.pos = 0;
+        if self.pos >= self.sequence.len() {
+            return;
+        }
+        let gone = self.sequence.remove(self.pos);
+        for round in [&mut self.prev_round, &mut self.next_round]
+            .into_iter()
+            .flatten()
+        {
+            round.retain(|&i| i != gone);
+        }
+        self.fix_next_round();
+        if self.pos >= self.sequence.len() {
+            self.pos = 0;
+            if self.rounds() {
+                self.new_round();
             }
         }
     }
@@ -450,9 +521,55 @@ mod tests {
             let last = seen.last().unwrap().clone();
             seen.sort();
             assert_eq!(seen, ["a.jpg", "b10.jpg", "b2.jpg", "c.mp4"]);
+            // The next round's first is known ahead, to be decoded.
+            let peeked = p.peek_next().unwrap().path.clone();
             p.advance();
+            assert_eq!(p.current().unwrap().path, peeked);
             assert_ne!(name(&p), last, "a new round does not repeat the last file");
         }
+    }
+
+    #[test]
+    fn random_goes_back_into_the_round_before() {
+        let mut p = Playlist::new(Order::Random);
+        p.set_items(items(), None);
+        for _ in 0..3 {
+            p.advance();
+        }
+        let last = name(&p);
+        p.advance();
+        let first = name(&p);
+        // Previous: the file shown before, not one of the new round.
+        p.back();
+        assert_eq!(name(&p), last);
+        // Next: the new round again, as it was.
+        p.advance();
+        assert_eq!(name(&p), first);
+    }
+
+    #[test]
+    fn random_drops_the_last_of_a_round_into_a_new_round() {
+        let mut p = Playlist::new(Order::Random);
+        p.set_items(items(), None);
+        for _ in 0..2 {
+            p.advance();
+        }
+        let shown = name(&p);
+        p.advance();
+        let broken = name(&p);
+        p.remove_current();
+        assert_eq!(p.len(), 3);
+        assert_eq!(p.position(), Some((1, 3)));
+        assert_ne!(name(&p), shown, "a new round does not repeat the last file");
+        let mut seen = vec![name(&p)];
+        for _ in 0..2 {
+            p.advance();
+            seen.push(name(&p));
+        }
+        assert!(!seen.contains(&broken));
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), 3);
     }
 
     #[test]

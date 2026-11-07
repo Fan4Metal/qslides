@@ -8,7 +8,6 @@
 //! from the path of the exe, so an installed copy and a development build
 //! do not take each other's starts.
 
-use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -40,9 +39,19 @@ static TARGET: OnceLock<(egui::Context, isize)> = OnceLock::new();
 /// this exe in this session.
 fn name() -> String {
     let exe = std::env::current_exe().unwrap_or_default();
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    exe.to_string_lossy().to_lowercase().hash(&mut hasher);
-    format!("qslides.{:016x}", hasher.finish())
+    format!(
+        "qslides.{:016x}",
+        fnv1a(exe.to_string_lossy().to_lowercase().as_bytes())
+    )
+}
+
+/// FNV-1a, 64 bits: the same in every build, which std's `DefaultHasher`
+/// is not promised to be (copies built by different Rust versions would
+/// not have known each other).
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
 /// Called at start-up. If the program is already running from this exe,
@@ -173,4 +182,16 @@ unsafe extern "system" fn window_proc(
     };
     ctx.request_repaint();
     *main as LRESULT
+}
+
+#[cfg(test)]
+mod tests {
+    /// The known values of FNV-1a 64: the names do not change between
+    /// builds.
+    #[test]
+    fn names_are_stable() {
+        assert_eq!(super::fnv1a(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(super::fnv1a(b"a"), 0xaf63_dc4c_8601_ec8c);
+        assert_eq!(super::fnv1a(b"foobar"), 0x8594_4171_f739_67e8);
+    }
 }

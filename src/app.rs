@@ -301,6 +301,9 @@ impl App {
         let ctx = &cc.egui_ctx;
         // A photo frame: always dark.
         ctx.set_theme(egui::ThemePreference::Dark);
+        // Tooltips wrap within the menu's window (one width for all
+        // windows; egui's 500 points went past its edge and were cut).
+        ctx.all_styles_mut(|s| s.spacing.tooltip_width = crate::menu::TOOLTIP_WIDTH);
         ctx.options_mut(|o| {
             o.zoom_with_keyboard = false;
             o.input_options.max_double_click_delay = crate::win::double_click_time();

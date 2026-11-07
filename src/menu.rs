@@ -104,6 +104,9 @@ pub struct State {
 const WIDTH: f32 = 300.0;
 /// The panel's margin and border round the content.
 const MARGIN: f32 = 10.0;
+/// The widest a tooltip is, its frame left out: inside the menu's window,
+/// which a tooltip cannot leave (a layer of it), with room for the frame.
+pub const TOOLTIP_WIDTH: f32 = WIDTH - 20.0;
 /// The window's title: never shown (it has no caption), it finds the
 /// window among the thread's (`win::thread_window`).
 const TITLE: &str = "qslides menu";

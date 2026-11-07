@@ -263,15 +263,16 @@ pub fn apply_aspect(hwnd: isize, aspect: (u32, u32)) {
     let Some((work, _)) = monitor_at(r) else {
         return;
     };
-    let new = reshaped(r, work, aspect);
+    let new = reshaped(r, work, aspect, min_size_px(hwnd));
     if new != r {
         set_rect(hwnd, new);
     }
 }
 
 /// `rect` with the proportions `aspect` and the same area, the same
-/// centre, moved and if need be shrunk into `work`.
-pub fn reshaped(rect: [i32; 4], work: [i32; 4], aspect: (u32, u32)) -> [i32; 4] {
+/// centre, moved and if need be shrunk into `work`; grown to hold `min`
+/// on both sides (the window's least size would have cut it).
+pub fn reshaped(rect: [i32; 4], work: [i32; 4], aspect: (u32, u32), min: (i32, i32)) -> [i32; 4] {
     let (w, h) = (
         (rect[2] - rect[0]).max(1) as f64,
         (rect[3] - rect[1]).max(1) as f64,
@@ -286,6 +287,9 @@ pub fn reshaped(rect: [i32; 4], work: [i32; 4], aspect: (u32, u32)) -> [i32; 4] 
     let shrink = (ww / nw).min(wh / nh).min(1.0);
     nw *= shrink;
     nh *= shrink;
+    let grow = (min.0 as f64 / nw).max(min.1 as f64 / nh).max(1.0);
+    nw *= grow;
+    nh *= grow;
     let (nw, nh) = (nw.round() as i32, nh.round() as i32);
     let (cx, cy) = ((rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2);
     let left = (cx - nw / 2).clamp(work[0], (work[2] - nw).max(work[0]));
@@ -293,15 +297,35 @@ pub fn reshaped(rect: [i32; 4], work: [i32; 4], aspect: (u32, u32)) -> [i32; 4] 
     [left, top, left + nw, top + nh]
 }
 
+/// The window's least size, in points (`main`'s `with_min_inner_size`).
+pub const MIN_SIZE: [f32; 2] = [120.0, 90.0];
+
+/// [`MIN_SIZE`] in the pixels of `hwnd`'s display.
+fn min_size_px(hwnd: isize) -> (i32, i32) {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetDpiForWindow(hwnd: HWND) -> u32;
+    }
+    let dpi = match unsafe { GetDpiForWindow(hwnd as _) } {
+        0 => 96,
+        d => d,
+    };
+    let px = |points: f32| (points * dpi as f32 / 96.0).ceil() as i32;
+    (px(MIN_SIZE[0]), px(MIN_SIZE[1]))
+}
+
 /// `rect` (a window being sized by its `edge`, `WMSZ_*`) with the
 /// proportions `aspect`: by a side edge or a corner the width counts, by
 /// the top or the bottom edge the height; the edges across from the one
-/// dragged stay (metalamp's `squared`, any proportions).
-pub fn kept_aspect(rect: [i32; 4], edge: usize, aspect: (u32, u32)) -> [i32; 4] {
+/// dragged stay (metalamp's `squared`, any proportions). Not smaller than
+/// `min` (pixels) on either side: cut to it afterwards, as the window's
+/// least size, the proportions were lost (16:9 at the least width, 120 by
+/// 67, became 120 by 90).
+pub fn kept_aspect(rect: [i32; 4], edge: usize, aspect: (u32, u32), min: (i32, i32)) -> [i32; 4] {
     // WMSZ_LEFT 1, RIGHT 2, TOP 3, TOPLEFT 4, TOPRIGHT 5, BOTTOM 6,
     // BOTTOMLEFT 7, BOTTOMRIGHT 8.
     let (aw, ah) = (aspect.0.max(1) as i64, aspect.1.max(1) as i64);
-    let [left, mut top, mut right, mut bottom] = rect;
+    let [mut left, mut top, mut right, mut bottom] = rect;
     match edge {
         1 | 2 | 4 | 5 | 7 | 8 => {
             let h = ((right - left) as i64 * ah / aw) as i32;
@@ -312,7 +336,24 @@ pub fn kept_aspect(rect: [i32; 4], edge: usize, aspect: (u32, u32)) -> [i32; 4] 
             }
         }
         3 | 6 => right = left + ((bottom - top) as i64 * aw / ah) as i32,
-        _ => {}
+        _ => return rect,
+    }
+    if right - left < min.0 || bottom - top < min.1 {
+        // The least size of these proportions holding both.
+        let by_height = (min.1.max(0) as u64 * aw as u64).div_ceil(ah as u64) as i32;
+        let w = min.0.max(by_height);
+        let h = (w as i64 * ah / aw) as i32;
+        if matches!(edge, 1 | 4 | 7) {
+            left = right - w;
+        } else {
+            right = left + w;
+        }
+        // The top edge dragged: WMSZ_TOP, TOPLEFT, TOPRIGHT.
+        if matches!(edge, 3..=5) {
+            top = bottom - h;
+        } else {
+            bottom = top + h;
+        }
     }
     [left, top, right, bottom]
 }
@@ -756,6 +797,7 @@ unsafe extern "system" fn window_proc(
             [r.left, r.top, r.right, r.bottom],
             wparam,
             (aspect >> 16, aspect & 0xffff),
+            min_size_px(hwnd as isize),
         );
         *r = RECT {
             left,
@@ -897,13 +939,31 @@ mod tests {
     #[test]
     fn proportions_while_sizing() {
         // By the right edge the width counts, the bottom follows.
-        assert_eq!(kept_aspect([0, 0, 320, 999], 2, (16, 9)), [0, 0, 320, 180]);
+        let min = (120, 90);
+        assert_eq!(
+            kept_aspect([0, 0, 320, 999], 2, (16, 9), min),
+            [0, 0, 320, 180]
+        );
         // By the top left corner the top moves.
-        assert_eq!(kept_aspect([0, 0, 300, 999], 4, (3, 2)), [0, 799, 300, 999]);
+        assert_eq!(
+            kept_aspect([0, 0, 300, 999], 4, (3, 2), min),
+            [0, 799, 300, 999]
+        );
         // By the bottom edge the height counts, the right edge follows.
         assert_eq!(
-            kept_aspect([10, 10, 999, 210], 6, (1, 1)),
+            kept_aspect([10, 10, 999, 210], 6, (1, 1), min),
             [10, 10, 210, 210]
+        );
+        // At the least width 16:9 would be 67 high, below the least
+        // height: as small as both allow, 160 by 90, the proportions kept.
+        assert_eq!(
+            kept_aspect([0, 0, 120, 999], 2, (16, 9), (120, 90)),
+            [0, 0, 160, 90]
+        );
+        // By the top left corner, the bottom right corner stays.
+        assert_eq!(
+            kept_aspect([500, 500, 600, 600], 4, (9, 16), (120, 90)),
+            [480, 387, 600, 600]
         );
     }
 
@@ -926,18 +986,22 @@ mod tests {
     #[test]
     fn reshaped_keeps_area_and_screen() {
         let work = [0, 0, 1920, 1040];
-        let r = reshaped([100, 100, 500, 400], work, (1, 1));
+        let min = (120, 90);
+        let r = reshaped([100, 100, 500, 400], work, (1, 1), min);
         let (w, h) = (r[2] - r[0], r[3] - r[1]);
         assert_eq!(w, h);
         assert!((w * h - 400 * 300).abs() < 1000);
         // Too tall for the work area: shrunk into it.
-        let r = reshaped([0, 0, 1900, 1000], work, (9, 16));
+        let r = reshaped([0, 0, 1900, 1000], work, (9, 16), min);
         assert!(
             r[1] >= 0 && r[3] <= 1040 && r[0] >= 0 && r[2] <= 1920,
             "{r:?}"
         );
         // Past the right edge: moved back.
-        let r = reshaped([1800, 100, 2200, 400], work, (4, 3));
+        let r = reshaped([1800, 100, 2200, 400], work, (4, 3), min);
         assert!(r[2] <= 1920, "{r:?}");
+        // The least window made 16:9: grown to the least height.
+        let r = reshaped([100, 100, 220, 190], work, (16, 9), min);
+        assert_eq!((r[2] - r[0], r[3] - r[1]), (160, 90));
     }
 }

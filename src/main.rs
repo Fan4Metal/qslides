@@ -93,7 +93,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title(APP_NAME)
             .with_inner_size(DEFAULT_SIZE)
-            .with_min_inner_size([120.0, 90.0])
+            .with_min_inner_size(win::MIN_SIZE)
             .with_decorations(false)
             .with_resizable(true)
             .with_drag_and_drop(true)

@@ -1243,8 +1243,13 @@ impl eframe::App for App {
             self.modal = self.about.open;
             crate::win::enable(hwnd, !self.modal);
         }
-        let state = self.menu_state();
-        let cmds = self.menu.show(&ctx, owner, &state);
+        // Gathered only while the menu is open (it copies the folders).
+        let cmds = if self.menu.open {
+            let state = self.menu_state();
+            self.menu.show(&ctx, owner, &state)
+        } else {
+            Vec::new()
+        };
         if !cmds.is_empty() {
             for cmd in cmds {
                 self.run(cmd, &ctx);

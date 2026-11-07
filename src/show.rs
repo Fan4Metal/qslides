@@ -107,6 +107,45 @@ impl VideoLength {
     }
 }
 
+/// Where the widget's window stays among the others.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Layer {
+    /// As any window: under the one in front.
+    #[default]
+    Normal,
+    /// Above all windows ("Always on top").
+    Top,
+    /// Under all windows, on the desktop ("On the desktop").
+    Desktop,
+}
+
+impl Layer {
+    pub const ALL: [Layer; 3] = [Layer::Normal, Layer::Top, Layer::Desktop];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Layer::Normal => "normal",
+            Layer::Top => "top",
+            Layer::Desktop => "desktop",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Layer> {
+        Layer::ALL.into_iter().find(|l| l.name() == name)
+    }
+
+    /// The level winit keeps the window at; on the desktop the window's
+    /// subclass keeps it there (`win::set_on_desktop`), winit only puts it
+    /// at the bottom once.
+    pub fn level(self) -> egui::WindowLevel {
+        match self {
+            Layer::Normal => egui::WindowLevel::Normal,
+            Layer::Top => egui::WindowLevel::AlwaysOnTop,
+            Layer::Desktop => egui::WindowLevel::AlwaysOnBottom,
+        }
+    }
+}
+
 /// The window's proportions, width to height; `None`: any.
 pub const ASPECTS: [Option<(u32, u32)>; 11] = [
     None,

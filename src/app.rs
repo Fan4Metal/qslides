@@ -26,7 +26,7 @@ use crate::loader::{Done, Loader};
 use crate::media::{Video, VideoMsg};
 use crate::menu::Cmd;
 use crate::settings::Settings;
-use crate::show::{Fit, Playlist, VideoLength};
+use crate::show::{Fit, Layer, Playlist, VideoLength};
 use crate::ui::about::AboutWindow;
 use crate::ui::icons::Icon;
 use crate::update::Updates;
@@ -210,7 +210,7 @@ pub struct App {
     fit: Fit,
     video: VideoLength,
     aspect: Option<(u32, u32)>,
-    on_top: bool,
+    layer: Layer,
     tray_only: bool,
     tray: Option<crate::tray::Tray>,
     /// When to ask again for a tray icon the shell refused.
@@ -277,10 +277,9 @@ impl App {
                 crate::win::set_taskbar_button(hwnd, false);
             }
         }
-        if settings.on_top {
-            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
-                egui::WindowLevel::AlwaysOnTop,
-            ));
+        if settings.layer != Layer::Normal {
+            crate::win::set_on_desktop(settings.layer == Layer::Desktop);
+            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(settings.layer.level()));
         }
         let mut updates = Updates::new(settings.check_updates, settings.last_update_check);
         updates.start_if_due(ctx);
@@ -311,7 +310,7 @@ impl App {
             fit: settings.fit,
             video: settings.video,
             aspect: settings.aspect,
-            on_top: settings.on_top,
+            layer: settings.layer,
             tray_only: settings.tray_only,
             tray: None,
             tray_retry: None,
@@ -681,7 +680,7 @@ impl App {
             fit: self.fit,
             video: self.video,
             aspect: self.aspect,
-            on_top: self.on_top,
+            layer: self.layer,
             autostart: self.autostart,
             tray_only: self.tray_only,
             update: self
@@ -762,14 +761,16 @@ impl App {
                     crate::win::apply_aspect(hwnd, a);
                 }
             }
-            Cmd::OnTop => {
-                self.on_top = !self.on_top;
-                let level = if self.on_top {
-                    egui::WindowLevel::AlwaysOnTop
+            Cmd::Layer(layer) => {
+                // Above all windows and on the desktop exclude each other:
+                // one switched off, the window is as any other.
+                self.layer = if self.layer == layer {
+                    Layer::Normal
                 } else {
-                    egui::WindowLevel::Normal
+                    layer
                 };
-                ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+                crate::win::set_on_desktop(self.layer == Layer::Desktop);
+                ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(self.layer.level()));
             }
             Cmd::Autostart => {
                 let on = !crate::win::autostart();
@@ -1287,7 +1288,10 @@ impl eframe::App for App {
             wake = Some(wake.map_or(d, |w| w.min(d)));
         }
         let owner = self.hwnd;
-        self.about.show(&ctx, owner, self.on_top, &mut self.updates);
+        // On the desktop, About and the menu are above the others all the
+        // same: they would open under them.
+        let above = self.layer != Layer::Normal;
+        self.about.show(&ctx, owner, above, &mut self.updates);
         // About is modal: the widget takes no clicks while it is open, and
         // a click on it brings About forward (Windows does that for the
         // enabled window a disabled owner owns).
@@ -1334,7 +1338,7 @@ impl eframe::App for App {
             fit: self.fit,
             video: self.video,
             aspect: self.aspect,
-            on_top: self.on_top,
+            layer: self.layer,
             tray_only: self.tray_only,
             last_file: self.shown_path(),
         }

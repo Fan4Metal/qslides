@@ -8,7 +8,7 @@
 
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
-use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 use std::sync::{Mutex, OnceLock};
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -376,6 +376,50 @@ pub fn bring_forward(hwnd: isize) {
     }
 }
 
+/// The widget brought forward by the user (its tray icon): also from under
+/// the other windows while it is on the desktop, until the program loses
+/// the focus.
+pub fn raise(hwnd: isize) {
+    mark_raised();
+    bring_forward(hwnd);
+}
+
+/// The widget is about to be brought forward (by the user: a second start
+/// or the tray icon): on the desktop, it may come above the others until
+/// the program loses the focus.
+pub fn mark_raised() {
+    if ON_DESKTOP.load(Relaxed) {
+        RAISED.store(true, Relaxed);
+    }
+}
+
+/// Keep the widget under all windows ("On the desktop"), or not. winit's
+/// `AlwaysOnBottom` puts it at the bottom once; activated (a click on it),
+/// Windows would bring it up, which the subclass turns back
+/// (`WM_WINDOWPOSCHANGING`).
+pub fn set_on_desktop(on: bool) {
+    ON_DESKTOP.store(on, Relaxed);
+    RAISED.store(false, Relaxed);
+}
+
+/// The window put under all the others, neither moved nor activated.
+fn to_bottom(hwnd: HWND) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HWND_BOTTOM, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+    };
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            HWND_BOTTOM,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+    };
+}
+
 /// The window of this thread titled `title` (a viewport of the program's:
 /// eframe gives no handle for it), hidden or not.
 pub fn thread_window(title: &str) -> Option<isize> {
@@ -609,6 +653,10 @@ static EXPLORER_STARTED: AtomicU32 = AtomicU32::new(0);
 /// The proportions kept while the window is sized, width << 16 | height;
 /// 0: any.
 static ASPECT: AtomicU32 = AtomicU32::new(0);
+/// The window stays under all the others ([`set_on_desktop`]); `RAISED`:
+/// brought above them by the user for a while ([`raise`]).
+static ON_DESKTOP: AtomicBool = AtomicBool::new(false);
+static RAISED: AtomicBool = AtomicBool::new(false);
 
 /// Keep the window at `aspect` while its edges are dragged, or not.
 pub fn set_kept_aspect(aspect: Option<(u32, u32)>) {
@@ -746,7 +794,9 @@ unsafe extern "system" fn window_proc(
     _data: usize,
 ) -> LRESULT {
     use windows_sys::Win32::UI::Shell::DefSubclassProc;
-    use windows_sys::Win32::UI::WindowsAndMessaging::WM_SIZING;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HWND_BOTTOM, SWP_NOZORDER, WINDOWPOS, WM_ACTIVATEAPP, WM_SIZING, WM_WINDOWPOSCHANGING,
+    };
     if msg != 0 && msg == TASKBAR_BUTTON.load(Relaxed) {
         hook(Hooked::TaskbarButton);
     }
@@ -775,12 +825,12 @@ unsafe extern "system" fn window_proc(
         const WM_CONTEXTMENU: u32 = 0x007B;
         match lparam as u32 & 0xFFFF {
             // At once, without waiting for a frame.
-            NIN_SELECT | NIN_KEYSELECT => bring_forward(hwnd as isize),
+            NIN_SELECT | NIN_KEYSELECT => raise(hwnd as isize),
             WM_CONTEXTMENU => {
                 let x = (wparam & 0xFFFF) as u16 as i16 as i32;
                 let y = ((wparam >> 16) & 0xFFFF) as u16 as i16 as i32;
                 match crate::tray::menu(hwnd as isize, x, y) {
-                    Some(crate::tray::TrayCmd::Show) => bring_forward(hwnd as isize),
+                    Some(crate::tray::TrayCmd::Show) => raise(hwnd as isize),
                     Some(crate::tray::TrayCmd::Exit) => hook(Hooked::Exit),
                     None => {}
                 }
@@ -788,6 +838,22 @@ unsafe extern "system" fn window_proc(
             _ => {}
         }
         return 0;
+    }
+    // On the desktop: whatever brings the window up (a click on it, Windows
+    // activating it) leaves it at the bottom, unless the user raised it.
+    if msg == WM_WINDOWPOSCHANGING
+        && lparam != 0
+        && ON_DESKTOP.load(Relaxed)
+        && !RAISED.load(Relaxed)
+    {
+        let pos = unsafe { &mut *(lparam as *mut WINDOWPOS) };
+        if pos.flags & SWP_NOZORDER == 0 {
+            pos.hwndInsertAfter = HWND_BOTTOM;
+        }
+    }
+    // Raised, it goes down again once another program has the focus.
+    if msg == WM_ACTIVATEAPP && wparam == 0 && RAISED.swap(false, Relaxed) {
+        to_bottom(hwnd);
     }
     let aspect = ASPECT.load(Relaxed);
     if msg == WM_SIZING && lparam != 0 && aspect != 0 {

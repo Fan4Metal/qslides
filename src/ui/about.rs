@@ -57,7 +57,8 @@ impl AboutWindow {
     /// `lang` for the settings. `owner` is the widget's window; `on_top`:
     /// the widget is always on top, so About is too (an owned window is
     /// kept above its owner, but a plain one was still covered by a
-    /// topmost owner).
+    /// topmost owner), or on the desktop, where About would open under
+    /// the other windows.
     pub fn show(
         &mut self,
         ctx: &egui::Context,

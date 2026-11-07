@@ -180,6 +180,9 @@ unsafe extern "system" fn window_proc(
     let Some((ctx, main)) = TARGET.get().filter(|_| data.dwData == MAGIC) else {
         return 0;
     };
+    // The later start brings the window forward, from under the others
+    // too while it is on the desktop.
+    crate::win::mark_raised();
     ctx.request_repaint();
     *main as LRESULT
 }

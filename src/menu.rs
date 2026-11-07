@@ -17,7 +17,8 @@ use std::path::PathBuf;
 use egui::{Key, RichText, Ui};
 
 use crate::show::{
-    ASPECTS, Fit, INTERVALS, Order, VideoLength, aspect_label, interval_label, nearest_interval,
+    ASPECTS, Fit, INTERVALS, Layer, Order, VideoLength, aspect_label, interval_label,
+    nearest_interval,
 };
 use crate::ui::OwnWindow;
 use crate::ui::icons::Icon;
@@ -39,7 +40,8 @@ pub enum Cmd {
     Fit(Fit),
     Video(VideoLength),
     Aspect(Option<(u32, u32)>),
-    OnTop,
+    /// The window above all others or on the desktop, switched on or off.
+    Layer(Layer),
     Autostart,
     TrayOnly,
     About,
@@ -76,7 +78,7 @@ pub struct State {
     pub fit: Fit,
     pub video: VideoLength,
     pub aspect: Option<(u32, u32)>,
-    pub on_top: bool,
+    pub layer: Layer,
     pub autostart: bool,
     pub tray_only: bool,
     /// The version of a newer release, when one was found.
@@ -377,9 +379,18 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
     };
     switch(
         ui,
-        s.on_top,
+        s.layer == Layer::Top,
         tr!("Always on top", "Поверх всех окон"),
-        Cmd::OnTop,
+        Cmd::Layer(Layer::Top),
+    );
+    switch(
+        ui,
+        s.layer == Layer::Desktop,
+        tr!(
+            "On the desktop, under all windows",
+            "На рабочем столе, под всеми окнами"
+        ),
+        Cmd::Layer(Layer::Desktop),
     );
     switch(
         ui,
@@ -420,7 +431,7 @@ mod tests {
             fit: Fit::Fill,
             video: VideoLength::Whole,
             aspect: Some((16, 9)),
-            on_top: true,
+            layer: Layer::Top,
             autostart: false,
             tray_only: false,
             update: Some("0.2.0".into()),

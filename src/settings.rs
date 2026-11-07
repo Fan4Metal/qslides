@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use crate::i18n::LangChoice;
-use crate::show::{Fit, Order, VideoLength, aspect_from_name, aspect_name};
+use crate::show::{Fit, Layer, Order, VideoLength, aspect_from_name, aspect_name};
 
 const LANGUAGE: &str = "language";
 const CHECK_UPDATES: &str = "check_updates";
@@ -22,7 +22,9 @@ const ORDER: &str = "order";
 const FIT: &str = "fit";
 const VIDEO: &str = "video";
 const ASPECT: &str = "aspect";
+/// Read only: before `layer`, `true` was `Layer::Top`.
 const ON_TOP: &str = "on_top";
+const LAYER: &str = "layer";
 const TRAY_ONLY: &str = "tray_only";
 const LAST_FILE: &str = "last_file";
 
@@ -100,7 +102,8 @@ pub struct Settings {
     pub video: VideoLength,
     /// The window's proportions kept while it is sized; `None`: any.
     pub aspect: Option<(u32, u32)>,
-    pub on_top: bool,
+    /// Above all windows, under them, or as any window.
+    pub layer: Layer,
     /// No taskbar button; an icon in the notification area instead.
     pub tray_only: bool,
     /// The file shown when the program was closed: the show goes on from
@@ -119,7 +122,7 @@ impl Default for Settings {
             fit: Fit::Fit,
             video: VideoLength::Whole,
             aspect: None,
-            on_top: false,
+            layer: Layer::Normal,
             tray_only: false,
             last_file: None,
         }
@@ -167,7 +170,12 @@ impl Settings {
                 .as_deref()
                 .and_then(aspect_from_name)
                 .unwrap_or(d.aspect),
-            on_top: flag(get(ON_TOP).as_deref(), d.on_top),
+            layer: match get(LAYER).as_deref().and_then(Layer::from_name) {
+                Some(layer) => layer,
+                // Saved by a version before `layer`.
+                None if flag(get(ON_TOP).as_deref(), false) => Layer::Top,
+                None => d.layer,
+            },
             tray_only: flag(get(TRAY_ONLY).as_deref(), d.tray_only),
             last_file: get(LAST_FILE).filter(|v| !v.is_empty()).map(PathBuf::from),
         }
@@ -182,7 +190,8 @@ impl Settings {
         storage.set_string(FIT, self.fit.name().into());
         storage.set_string(VIDEO, self.video.name().into());
         storage.set_string(ASPECT, aspect_name(self.aspect));
-        storage.set_string(ON_TOP, self.on_top.to_string());
+        storage.set_string(LAYER, self.layer.name().into());
+        storage.remove_string(ON_TOP);
         storage.set_string(TRAY_ONLY, self.tray_only.to_string());
         let last = self
             .last_file
@@ -226,7 +235,7 @@ mod tests {
             fit: Fit::Fill,
             video: VideoLength::Interval,
             aspect: Some((9, 16)),
-            on_top: true,
+            layer: Layer::Desktop,
             tray_only: true,
             last_file: Some(PathBuf::from(r"C:\Фото\1.jpg")),
         };
@@ -252,12 +261,24 @@ mod tests {
             (VIDEO, "muted"),
             (ASPECT, "7:5"),
             (ON_TOP, "1"),
+            (LAYER, "above"),
             (TRAY_ONLY, ""),
             (LAST_FILE, ""),
         ] {
             storage.set_string(key, value.into());
         }
         assert_eq!(Settings::load(&storage), Settings::default());
+    }
+
+    #[test]
+    fn always_on_top_of_an_older_version() {
+        let mut storage = MemStorage::default();
+        storage.set_string(ON_TOP, "true".into());
+        assert_eq!(Settings::load(&storage).layer, Layer::Top);
+        // Saved again, it is a layer.
+        Settings::load(&storage).save(&mut storage);
+        assert_eq!(storage.get_string(ON_TOP), None);
+        assert_eq!(storage.get_string(LAYER).as_deref(), Some("top"));
     }
 
     #[test]

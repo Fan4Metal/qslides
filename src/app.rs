@@ -95,27 +95,55 @@ struct Playing {
     texture: TextureHandle,
     /// The time of its first frame (100 ns units): the clock counts from it.
     first: i64,
-    /// A frame received but not yet due.
-    pending: Option<(i64, ColorImage)>,
+    /// A frame received but not yet due, and whether it begins a piece.
+    pending: Option<(i64, ColorImage, bool)>,
     /// The decoder sent its last frame.
     ended: bool,
-    /// Played again from the start after its end (videos as long as
-    /// pictures).
-    looped: bool,
+    /// The time it has by the clock: as long as a picture, its limit when
+    /// shown to its end; `None`: to its end, however long.
+    limit: Option<Duration>,
+    /// A cut came: the next frame begins another piece of the video.
+    cut: bool,
+    /// It is shown in pieces (a cut has come): the decoder ends it when its
+    /// time is up, the clock only if it falls behind.
+    in_pieces: bool,
+    /// The texture of the piece before, to fade out under the new one.
+    faded: Option<TextureHandle>,
 }
 
+/// How much longer than its time the clock lets a video shown in pieces
+/// run: the decoder ends it, after seeks that took some time.
+const PIECES_GRACE: Duration = Duration::from_secs(5);
+
 impl Playing {
+    /// The time after which the clock moves the show on, if any.
+    fn clock_limit(&self) -> Option<Duration> {
+        let grace = if self.in_pieces {
+            PIECES_GRACE
+        } else {
+            Duration::ZERO
+        };
+        self.limit.map(|l| l + grace)
+    }
+
     /// Show the frame due at `elapsed`; the time until the next one, if
     /// one is waiting. Behind (the window dragged, a long frame), only the
     /// last of the frames due goes into the texture: each one set was
-    /// uploaded, though only the last was seen.
-    fn pump(&mut self, elapsed: Duration) -> Option<Duration> {
+    /// uploaded, though only the last was seen. The first frame of another
+    /// piece goes into a texture of its own, the old one left in `faded`.
+    fn pump(&mut self, elapsed: Duration, ctx: &egui::Context) -> Option<Duration> {
         let now = self.first + (elapsed.as_nanos() / 100) as i64;
         let mut shown = None;
         let wait = loop {
             if self.pending.is_none() {
                 match self.video.rx.try_recv() {
-                    Ok(VideoMsg::Frame(t, image)) => self.pending = Some((t, image)),
+                    Ok(VideoMsg::Frame(t, image)) => {
+                        self.pending = Some((t, image, std::mem::take(&mut self.cut)));
+                    }
+                    Ok(VideoMsg::Cut) => {
+                        (self.cut, self.in_pieces) = (true, true);
+                        continue;
+                    }
                     Ok(VideoMsg::End) | Err(TryRecvError::Disconnected) => {
                         self.ended = true;
                         break None;
@@ -128,11 +156,23 @@ impl Playing {
                     Err(TryRecvError::Empty) => break None,
                 }
             }
-            let due = self.pending.as_ref().map_or(i64::MAX, |(t, _)| *t);
+            let due = self.pending.as_ref().map_or(i64::MAX, |(t, ..)| *t);
             if due > now {
                 break Some(Duration::from_nanos(((due - now) * 100) as u64));
             }
-            shown = self.pending.take().map(|(_, image)| image);
+            let Some((_, image, cut)) = self.pending.take() else {
+                break None;
+            };
+            if cut {
+                // The piece before ends on its last frame due.
+                if let Some(last) = shown.take() {
+                    self.texture.set(last, TextureOptions::LINEAR);
+                }
+                let new = ctx.load_texture("video", image, TextureOptions::LINEAR);
+                self.faded = Some(std::mem::replace(&mut self.texture, new));
+            } else {
+                shown = Some(image);
+            }
         };
         if let Some(image) = shown {
             self.texture.set(image, TextureOptions::LINEAR);
@@ -209,6 +249,10 @@ pub struct App {
     interval: u32,
     fit: Fit,
     video: VideoLength,
+    /// Seconds a video shown to its end may take; 0: no limit.
+    video_limit: u32,
+    /// The pieces a video longer than its time is shown in.
+    video_pieces: u32,
     caption: Caption,
     /// The dates files were taken, for `CaptionPart::Date`.
     dates: crate::dates::Dates,
@@ -314,6 +358,8 @@ impl App {
             interval: settings.interval,
             fit: settings.fit,
             video: settings.video,
+            video_limit: settings.video_limit,
+            video_pieces: settings.video_pieces,
             caption: settings.caption,
             dates: crate::dates::Dates::new(ctx.clone()),
             aspect: settings.aspect,
@@ -499,8 +545,12 @@ impl App {
             Kind::Image => Prep::Image(self.loader.request(item.path.clone(), self.max_side(ctx))),
             Kind::Video => {
                 let side = self.video_side(ctx);
-                let looped = self.video == VideoLength::Interval;
-                Prep::Video(Video::start(&item.path, side, looped, ctx.clone()))
+                let plan = crate::media::Plan {
+                    looped: self.video == VideoLength::Interval,
+                    time: (self.video_time()).map(|t| (t.as_nanos() / 100) as i64),
+                    pieces: self.video_pieces,
+                };
+                Prep::Video(Video::start(&item.path, side, plan, ctx.clone()))
             }
         };
         self.upcoming = Some(Upcoming { item, step, prep });
@@ -508,6 +558,7 @@ impl App {
 
     /// Take what the loader and a starting video have ready.
     fn poll_upcoming(&mut self, done: Vec<Done>, ctx: &egui::Context) {
+        let limit = self.video_time();
         let Some(up) = &mut self.upcoming else { return };
         match &mut up.prep {
             Prep::Image(id) => {
@@ -526,16 +577,20 @@ impl App {
                     else {
                         unreachable!()
                     };
-                    let looped = self.video == VideoLength::Interval;
                     up.prep = Prep::Ready(Content::Video(Playing {
                         video,
                         texture,
                         first: t,
                         pending: None,
                         ended: false,
-                        looped,
+                        limit,
+                        cut: false,
+                        in_pieces: false,
+                        faded: None,
                     }));
                 }
+                // Not before a first frame.
+                Ok(VideoMsg::Cut) => {}
                 Ok(VideoMsg::End) => up.prep = Prep::Failed("no frame".into()),
                 Ok(VideoMsg::Failed(e)) => up.prep = Prep::Failed(e),
                 Err(TryRecvError::Disconnected) => {
@@ -607,8 +662,7 @@ impl App {
                 elapsed >= interval
             }
             Content::Video(p) => {
-                let by_clock = self.video == VideoLength::Interval || p.looped;
-                (p.ended && p.pending.is_none()) || (by_clock && elapsed >= interval)
+                (p.ended && p.pending.is_none()) || p.clock_limit().is_some_and(|l| elapsed >= l)
             }
         };
         if due {
@@ -616,14 +670,31 @@ impl App {
             return None;
         }
         match &slide.content {
-            Content::Video(p) if !p.looped && self.video == VideoLength::Whole => None,
-            _ => Some(interval.saturating_sub(elapsed)),
+            Content::Video(p) => p.clock_limit().map(|l| l.saturating_sub(elapsed)),
+            Content::Image(_) => Some(interval.saturating_sub(elapsed)),
         }
+    }
+
+    /// A video made ready for other settings is made again.
+    fn drop_upcoming_video(&mut self) {
+        if (self.upcoming.as_ref()).is_some_and(|u| u.item.kind == Kind::Video) {
+            self.upcoming = None;
+        }
+    }
+
+    /// The time a video starting now has: as long as a picture, or its
+    /// limit when shown to its end; `None`: to its end.
+    fn video_time(&self) -> Option<Duration> {
+        let secs = match self.video {
+            VideoLength::Interval => self.interval,
+            VideoLength::Whole => self.video_limit,
+        };
+        (secs > 0).then(|| Duration::from_secs(u64::from(secs)))
     }
 
     /// The frames of the video on the screen that are due; the time until
     /// the next one is.
-    fn pump(&mut self) -> Option<Duration> {
+    fn pump(&mut self, ctx: &egui::Context) -> Option<Duration> {
         let Some(Slide {
             content: Content::Video(playing),
             clock,
@@ -633,7 +704,11 @@ impl App {
             return None;
         };
         let was_ended = playing.ended;
-        let wait = playing.pump(clock.elapsed());
+        let wait = playing.pump(clock.elapsed(), ctx);
+        // Another piece: the one before fades out under it, as a slide does.
+        if let Some(old) = playing.faded.take() {
+            self.fade = Some((old, Instant::now()));
+        }
         if self.paused || self.locked || self.display_off {
             return None;
         }
@@ -688,6 +763,8 @@ impl App {
             order: self.playlist.order(),
             fit: self.fit,
             video: self.video,
+            video_limit: self.video_limit,
+            video_pieces: self.video_pieces,
             caption: self.caption,
             aspect: self.aspect,
             layer: self.layer,
@@ -757,14 +834,15 @@ impl App {
             Cmd::Caption(c) => self.caption = c,
             Cmd::Video(v) => {
                 self.video = v;
-                // A video made ready for the other way is made again.
-                if self
-                    .upcoming
-                    .as_ref()
-                    .is_some_and(|u| u.item.kind == Kind::Video)
-                {
-                    self.upcoming = None;
-                }
+                self.drop_upcoming_video();
+            }
+            Cmd::VideoLimit(secs) => {
+                self.video_limit = secs;
+                self.drop_upcoming_video();
+            }
+            Cmd::VideoPieces(n) => {
+                self.video_pieces = n;
+                self.drop_upcoming_video();
             }
             Cmd::Aspect(a) => {
                 self.aspect = a;
@@ -1355,7 +1433,7 @@ impl eframe::App for App {
         self.prepare(&ctx);
         // The video's frames first: its end, seen now, moves the show on in
         // this frame.
-        let mut wake = self.pump();
+        let mut wake = self.pump(&ctx);
         if let Some(d) = self.advance_if_due() {
             wake = Some(wake.map_or(d, |w| w.min(d)));
         }
@@ -1364,7 +1442,7 @@ impl eframe::App for App {
         // full channel, asks for no repaint).
         self.install();
         self.prepare(&ctx);
-        if let Some(d) = self.pump() {
+        if let Some(d) = self.pump(&ctx) {
             wake = Some(wake.map_or(d, |w| w.min(d)));
         }
         // The next slide's date read ahead, ready when it comes.
@@ -1431,6 +1509,8 @@ impl eframe::App for App {
             order: self.playlist.order(),
             fit: self.fit,
             video: self.video,
+            video_limit: self.video_limit,
+            video_pieces: self.video_pieces,
             caption: self.caption,
             aspect: self.aspect,
             layer: self.layer,

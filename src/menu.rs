@@ -17,8 +17,9 @@ use std::path::PathBuf;
 use egui::{Key, RichText, Ui};
 
 use crate::show::{
-    ASPECTS, Caption, CaptionPart, Fit, INTERVALS, Layer, Order, VideoLength, aspect_label,
-    interval_label, nearest_interval,
+    ASPECTS, Caption, CaptionPart, Fit, INTERVALS, Layer, MAX_PIECES, Order, VIDEO_LIMITS,
+    VideoLength, aspect_label, interval_label, nearest_interval, nearest_video_limit,
+    video_limit_label,
 };
 use crate::ui::OwnWindow;
 use crate::ui::icons::Icon;
@@ -39,6 +40,9 @@ pub enum Cmd {
     Order(Order),
     Fit(Fit),
     Video(VideoLength),
+    /// Seconds a video shown to its end may take; 0: no limit.
+    VideoLimit(u32),
+    VideoPieces(u32),
     /// The caption with a part switched on or off.
     Caption(Caption),
     Aspect(Option<(u32, u32)>),
@@ -81,6 +85,8 @@ pub struct State {
     pub order: Order,
     pub fit: Fit,
     pub video: VideoLength,
+    pub video_limit: u32,
+    pub video_pieces: u32,
     pub caption: Caption,
     pub aspect: Option<(u32, u32)>,
     pub layer: Layer,
@@ -311,6 +317,43 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
     ) {
         cmds.push(Cmd::Video(v));
     }
+    // A long video: its time when shown to the end, and the pieces of it
+    // shown when it is longer than its time (in either way).
+    egui::Grid::new("video_time")
+        .num_columns(3)
+        .spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            ui.spacing_mut().slider_width = 110.0;
+            let whole = s.video == VideoLength::Whole;
+            ui.add_enabled(whole, egui::Label::new(tr!("No longer than", "Не дольше")));
+            let mut step = nearest_video_limit(s.video_limit);
+            let slider = egui::Slider::new(&mut step, 0..=VIDEO_LIMITS.len() - 1).show_value(false);
+            let response = ui.add_enabled(whole, slider).on_disabled_hover_text(tr!(
+                "With \"To the end\": as long as pictures, a video has their time",
+                "С пунктом «До конца»: как картинки видео идёт их время"
+            ));
+            ui.add_enabled(
+                whole,
+                egui::Label::new(video_limit_label(VIDEO_LIMITS[step])),
+            );
+            if response.changed() && VIDEO_LIMITS[step] != s.video_limit {
+                cmds.push(Cmd::VideoLimit(VIDEO_LIMITS[step]));
+            }
+            ui.end_row();
+
+            ui.label(tr!("In pieces", "Кусками"));
+            let mut pieces = s.video_pieces.clamp(1, MAX_PIECES);
+            let slider = egui::Slider::new(&mut pieces, 1..=MAX_PIECES).show_value(false);
+            let response = ui.add(slider).on_hover_text(tr!(
+                "A video longer than its time is shown in so many pieces spread from its start to its end, with a fade between them; 1: its start only",
+                "Видео длиннее своего времени показывается столькими кусками от начала до конца, с растворением между ними; 1 — только начало"
+            ));
+            ui.label(pieces.to_string());
+            if response.changed() && pieces != s.video_pieces {
+                cmds.push(Cmd::VideoPieces(pieces));
+            }
+            ui.end_row();
+        });
     // Switches that add up, not a choice: each part on or off.
     heading(ui, tr!("Caption", "Подпись"));
     ui.horizontal_wrapped(|ui| {
@@ -467,6 +510,8 @@ mod tests {
             order: Order::Random,
             fit: Fit::Fill,
             video: VideoLength::Whole,
+            video_limit: 120,
+            video_pieces: 6,
             caption: Caption::NONE.toggled(CaptionPart::Name),
             aspect: Some((16, 9)),
             layer: Layer::Top,

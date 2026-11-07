@@ -36,8 +36,8 @@ use windows::Win32::Media::MediaFoundation::{
     MFStartup, MFVideoFormat_RGB32,
 };
 use windows::Win32::Media::MediaFoundation::{
-    IMFDXGIDeviceManager, MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, MF_SOURCE_READER_D3D_MANAGER,
-    MFCreateDXGIDeviceManager,
+    IMFDXGIDeviceManager, MF_PD_DURATION, MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS,
+    MF_SOURCE_READER_D3D_MANAGER, MFCreateDXGIDeviceManager,
 };
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{
@@ -192,9 +192,51 @@ pub enum VideoMsg {
     /// A frame, and when it is shown counted from the start of the video
     /// (100 ns units; a looped video's times go on growing).
     Frame(i64, ColorImage),
+    /// The next frame begins another piece of the video, further on
+    /// (shown with a cross-fade).
+    Cut,
     /// The last frame was sent.
     End,
     Failed(String),
+}
+
+/// How a video is shown: the time it has, and in how many pieces when it
+/// is longer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Plan {
+    /// Played again from the start while its time lasts (videos as long
+    /// as pictures).
+    pub looped: bool,
+    /// The time it has (100 ns units); `None`: to its end.
+    pub time: Option<i64>,
+    /// The pieces a longer video is shown in, spread from its start to its
+    /// end; 1: its start only.
+    pub pieces: u32,
+}
+
+/// The shortest piece a video is cut into: shorter, the fades would be
+/// most of it.
+const SHORTEST_PIECE: i64 = 2 * SECOND;
+
+/// The starts of the pieces a video of `duration` is shown in to fill
+/// `time` with `wanted` of them, and their length (100 ns units): equal
+/// pieces, the first at the start, the last ending at the end. `None` when
+/// it is shown as it is: it fits (a second more is not worth a cut), or
+/// its duration or its time is not known.
+pub fn pieces(duration: Option<i64>, time: Option<i64>, wanted: u32) -> Option<(Vec<i64>, i64)> {
+    let (d, t) = (duration?, time?);
+    if t <= 0 || d <= t + SECOND {
+        return None;
+    }
+    let most = (t / SHORTEST_PIECE).max(1);
+    let k = i64::from(wanted.max(1)).min(most);
+    let len = t / k;
+    let starts = if k == 1 {
+        vec![0]
+    } else {
+        (0..k).map(|i| i * (d - len) / (k - 1)).collect()
+    };
+    Some((starts, len))
 }
 
 /// A video being decoded on its own thread. Dropped, its thread stops.
@@ -213,10 +255,9 @@ impl Drop for Video {
 const AHEAD: usize = 3;
 
 impl Video {
-    /// Start decoding `path`, its frames scaled down to fit `max_side`;
-    /// with `looped`, from the start again after the end. `ctx` is asked to
-    /// repaint when a frame comes.
-    pub fn start(path: &Path, max_side: u32, looped: bool, ctx: egui::Context) -> Video {
+    /// Start decoding `path`, its frames scaled down to fit `max_side`, as
+    /// `plan` says. `ctx` is asked to repaint when a frame comes.
+    pub fn start(path: &Path, max_side: u32, plan: Plan, ctx: egui::Context) -> Video {
         let (tx, rx) = sync_channel(AHEAD);
         let stop = Arc::new(AtomicBool::new(false));
         let path = path.to_path_buf();
@@ -230,7 +271,7 @@ impl Video {
                     ctx.request_repaint();
                     return;
                 }
-                let result = decode_video(&path, max_side, looped, &tx, &stopped, &ctx);
+                let result = decode_video(&path, max_side, plan, &tx, &stopped, &ctx);
                 if let Err(e) = result {
                     let _ = tx.send(VideoMsg::Failed(e));
                     ctx.request_repaint();
@@ -399,7 +440,7 @@ const FRAME_STEP: i64 = SECOND / 31;
 fn decode_video(
     path: &Path,
     max_side: u32,
-    looped: bool,
+    plan: Plan,
     tx: &SyncSender<VideoMsg>,
     stop: &AtomicBool,
     ctx: &egui::Context,
@@ -426,7 +467,29 @@ fn decode_video(
     let stride = unsafe { reader.GetCurrentMediaType(stream) }
         .and_then(|t| unsafe { t.GetUINT32(&MF_MT_DEFAULT_STRIDE) })
         .map_or(w as i32 * 4, |s| s as i32);
-    // Added to the times of a looped video's later rounds.
+    let length = duration(&reader);
+    // A video longer than its time: its pieces, and the one played.
+    let cut_up = pieces(length, plan.time, plan.pieces);
+    let mut piece = 0usize;
+    if let Some((starts, len)) = &cut_up {
+        log::debug!(
+            "{}: {:.0} s shown in {} pieces of {:.1} s",
+            path.display(),
+            length.unwrap_or(0) as f64 / SECOND as f64,
+            starts.len(),
+            *len as f64 / SECOND as f64
+        );
+    }
+    let seek = |to: i64| {
+        let at = PROPVARIANT::from(to);
+        unsafe { reader.SetCurrentPosition(&GUID::zeroed(), &at) }.map_err(|e| err("seek", e))
+    };
+    // The time of the first frame: the pieces' starts count from it.
+    let mut base = None::<i64>;
+    // The next frame sent begins a piece after the first.
+    let mut cut = false;
+    // Added to the times of a looped video's later rounds and of the
+    // pieces after the first, so that they go on growing.
     let mut offset = 0i64;
     let mut last = 0i64;
     let mut frames = 0u64;
@@ -451,11 +514,19 @@ fn decode_video(
         }
         .map_err(|e| err("ReadSample", e))?;
         if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
-            if looped && frames > 0 {
+            // The duration said more than there was: the next piece.
+            if let Some((starts, _)) = &cut_up
+                && frames > 0
+                && piece + 1 < starts.len()
+            {
+                piece += 1;
+                seek(starts[piece])?;
+                (rewound, cut) = (true, true);
+                continue;
+            }
+            if plan.looped && cut_up.is_none() && frames > 0 {
                 rewound = true;
-                let start = PROPVARIANT::from(0i64);
-                unsafe { reader.SetCurrentPosition(&GUID::zeroed(), &start) }
-                    .map_err(|e| err("seek", e))?;
+                seek(0)?;
                 continue;
             }
             if frames == 0 {
@@ -469,6 +540,32 @@ fn decode_video(
             continue;
         }
         let Some(sample) = sample else { continue };
+        let base = *base.get_or_insert(time);
+        if let Some((starts, len)) = &cut_up {
+            let at = time - base;
+            // Decoded from the key frame before the piece's start.
+            if at < starts[piece] {
+                continue;
+            }
+            if at >= starts[piece] + len {
+                piece += 1;
+                if piece == starts.len() {
+                    let _ = tx.send(VideoMsg::End);
+                    ctx.request_repaint();
+                    return Ok(());
+                }
+                seek(starts[piece])?;
+                (rewound, cut) = (true, true);
+                continue;
+            }
+        }
+        if cut {
+            log::debug!(
+                "piece {} from {:.2} s",
+                piece + 1,
+                (time - base) as f64 / SECOND as f64
+            );
+        }
         if rewound {
             rewound = false;
             offset = last + SECOND / 30 - time;
@@ -479,12 +576,28 @@ fn decode_video(
         let image = pixels(&sample, w as usize, h as usize, stride).map_err(|e| err("frame", e))?;
         last = offset + time;
         frames += 1;
+        if cut {
+            cut = false;
+            if tx.send(VideoMsg::Cut).is_err() {
+                return Ok(());
+            }
+        }
         if tx.send(VideoMsg::Frame(last, image)).is_err() {
             // The video is no longer shown.
             return Ok(());
         }
         ctx.request_repaint();
     }
+}
+
+/// The length of the video the reader reads (100 ns units), if its source
+/// says.
+fn duration(reader: &IMFSourceReader) -> Option<i64> {
+    /// `MF_SOURCE_READER_MEDIASOURCE`: the source itself, not a stream.
+    const SOURCE: u32 = 0xFFFF_FFFF;
+    let value = unsafe { reader.GetPresentationAttribute(SOURCE, &MF_PD_DURATION) }.ok()?;
+    let d = u64::try_from(&value).ok()?;
+    i64::try_from(d).ok().filter(|&d| d > 0)
 }
 
 /// The pixels of a BGRX sample as an egui image.
@@ -602,6 +715,73 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A video shown to its end, in one piece.
+    const WHOLE: Plan = Plan {
+        looped: false,
+        time: None,
+        pieces: 1,
+    };
+
+    #[test]
+    fn pieces_of_a_long_video() {
+        let s = SECOND;
+        // A minute in 6 pieces of a 2-minute video: 10 s each, the first
+        // at the start, the last ending at the end.
+        let (starts, len) = pieces(Some(120 * s), Some(60 * s), 6).unwrap();
+        assert_eq!(len, 10 * s);
+        assert_eq!(starts, [0, 22, 44, 66, 88, 110].map(|n| n * s));
+        // One piece: the start.
+        assert_eq!(
+            pieces(Some(120 * s), Some(30 * s), 1),
+            Some((vec![0], 30 * s))
+        );
+        // No piece shorter than 2 s: 10 s give 5 of them, not 8.
+        assert_eq!(pieces(Some(120 * s), Some(10 * s), 8).unwrap().0.len(), 5);
+        // A video that fits, or of no known length, is shown as it is.
+        assert_eq!(pieces(Some(60 * s), Some(60 * s), 6), None);
+        assert_eq!(pieces(Some(60 * s), Some(59 * s + s / 2), 6), None);
+        assert_eq!(pieces(None, Some(10 * s), 6), None);
+        assert_eq!(pieces(Some(120 * s), None, 6), None);
+    }
+
+    /// The video named by `QSLIDES_VIDEO` (longer than 7 s) shown for 6 s in
+    /// 3 pieces: two cuts, the frames' times going on growing, with
+    /// `--nocapture`.
+    #[test]
+    #[ignore]
+    fn video_in_pieces() {
+        let path = std::path::PathBuf::from(std::env::var("QSLIDES_VIDEO").expect("QSLIDES_VIDEO"));
+        let plan = Plan {
+            looped: false,
+            time: Some(6 * SECOND),
+            pieces: 3,
+        };
+        let started = std::time::Instant::now();
+        let video = Video::start(&path, 320, plan, egui::Context::default());
+        let (mut times, mut cuts) = (Vec::new(), 0);
+        loop {
+            match video.rx.recv_timeout(std::time::Duration::from_secs(10)) {
+                Ok(VideoMsg::Cut) => {
+                    cuts += 1;
+                    println!(
+                        "cut after {:.3} s, at {:.2} s of decoding",
+                        *times.last().unwrap() as f64 / SECOND as f64,
+                        started.elapsed().as_secs_f64()
+                    );
+                }
+                Ok(VideoMsg::Frame(t, _)) => times.push(t),
+                Ok(VideoMsg::End) => break,
+                Ok(VideoMsg::Failed(e)) => panic!("{e}"),
+                Err(e) => panic!("{e}"),
+            }
+        }
+        let shown = (*times.last().unwrap() - times[0]) as f64 / SECOND as f64;
+        println!("{} frames, {cuts} cuts, {shown:.2} s shown", times.len());
+        assert_eq!(cuts, 2);
+        assert!(times.windows(2).all(|w| w[1] > w[0]));
+        assert!((5.5..6.5).contains(&shown), "{shown}");
+    }
+
     /// Decode the video named by `QSLIDES_VIDEO` and print its frames'
     /// size and times and the decoding speed, with `--nocapture`.
     #[test]
@@ -610,10 +790,11 @@ mod tests {
         let path = std::path::PathBuf::from(std::env::var("QSLIDES_VIDEO").expect("QSLIDES_VIDEO"));
         let ctx = egui::Context::default();
         let started = std::time::Instant::now();
-        let video = Video::start(&path, 1280, false, ctx);
+        let video = Video::start(&path, 1280, WHOLE, ctx);
         let mut frames = 0;
         loop {
             match video.rx.recv_timeout(std::time::Duration::from_secs(10)) {
+                Ok(VideoMsg::Cut) => {}
                 Ok(VideoMsg::Frame(t, image)) => {
                     if frames < 3 || frames % 100 == 0 {
                         println!(
@@ -663,10 +844,12 @@ mod tests {
     fn video_loops() {
         let path = std::path::PathBuf::from(std::env::var("QSLIDES_VIDEO").expect("QSLIDES_VIDEO"));
         let times = |looped: bool, until: Option<i64>| {
-            let video = Video::start(&path, 320, looped, egui::Context::default());
+            let plan = Plan { looped, ..WHOLE };
+            let video = Video::start(&path, 320, plan, egui::Context::default());
             let mut times = Vec::new();
             loop {
                 match video.rx.recv_timeout(std::time::Duration::from_secs(10)) {
+                    Ok(VideoMsg::Cut) => {}
                     Ok(VideoMsg::Frame(t, _)) => {
                         times.push(t);
                         if until.is_some_and(|u| t > u) {

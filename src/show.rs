@@ -293,6 +293,30 @@ pub fn interval_label(secs: u32) -> String {
     }
 }
 
+/// The longest a video shown to its end may take, in seconds: the slider's
+/// steps; 0, the first, is no limit.
+pub const VIDEO_LIMITS: [u32; 16] = [
+    0, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1200, 1800, 3600,
+];
+
+/// The step of [`VIDEO_LIMITS`] nearest to `secs`.
+pub fn nearest_video_limit(secs: u32) -> usize {
+    (0..VIDEO_LIMITS.len())
+        .min_by_key(|&i| VIDEO_LIMITS[i].abs_diff(secs))
+        .unwrap_or(0)
+}
+
+pub fn video_limit_label(secs: u32) -> String {
+    if secs == 0 {
+        tr!("no limit", "без ограничения").to_owned()
+    } else {
+        interval_label(secs)
+    }
+}
+
+/// The most pieces a video longer than its time is shown in.
+pub const MAX_PIECES: u32 = 10;
+
 /// A small random number generator (xorshift64*): the shuffle needs no
 /// more, and no crate.
 struct Rng(u64);

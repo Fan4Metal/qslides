@@ -21,6 +21,8 @@ const INTERVAL: &str = "interval";
 const ORDER: &str = "order";
 const FIT: &str = "fit";
 const VIDEO: &str = "video";
+const VIDEO_LIMIT: &str = "video_limit";
+const VIDEO_PIECES: &str = "video_pieces";
 const CAPTION: &str = "caption";
 const ASPECT: &str = "aspect";
 /// Read only: before `layer`, `true` was `Layer::Top`.
@@ -102,6 +104,11 @@ pub struct Settings {
     pub order: Order,
     pub fit: Fit,
     pub video: VideoLength,
+    /// Seconds a video shown to its end may take at most; 0: no limit.
+    pub video_limit: u32,
+    /// The pieces a video longer than its time is shown in (1 to
+    /// `show::MAX_PIECES`; 1: its start only).
+    pub video_pieces: u32,
     pub caption: Caption,
     /// The window's proportions kept while it is sized; `None`: any.
     pub aspect: Option<(u32, u32)>,
@@ -126,6 +133,8 @@ impl Default for Settings {
             order: Order::Name,
             fit: Fit::Fit,
             video: VideoLength::Whole,
+            video_limit: 0,
+            video_pieces: 1,
             caption: Caption::NONE,
             aspect: None,
             layer: Layer::Normal,
@@ -173,6 +182,14 @@ impl Settings {
                 .as_deref()
                 .and_then(VideoLength::from_name)
                 .unwrap_or(d.video),
+            video_limit: get(VIDEO_LIMIT)
+                .and_then(|v| v.parse().ok())
+                .filter(|&n: &u32| n <= 86_400)
+                .unwrap_or(d.video_limit),
+            video_pieces: get(VIDEO_PIECES)
+                .and_then(|v| v.parse().ok())
+                .filter(|n: &u32| (1..=crate::show::MAX_PIECES).contains(n))
+                .unwrap_or(d.video_pieces),
             caption: get(CAPTION)
                 .as_deref()
                 .and_then(Caption::from_name)
@@ -201,6 +218,8 @@ impl Settings {
         storage.set_string(ORDER, self.order.name().into());
         storage.set_string(FIT, self.fit.name().into());
         storage.set_string(VIDEO, self.video.name().into());
+        storage.set_string(VIDEO_LIMIT, self.video_limit.to_string());
+        storage.set_string(VIDEO_PIECES, self.video_pieces.to_string());
         storage.set_string(CAPTION, self.caption.name());
         storage.set_string(ASPECT, aspect_name(self.aspect));
         storage.set_string(LAYER, self.layer.name().into());
@@ -249,6 +268,8 @@ mod tests {
             order: Order::Random,
             fit: Fit::Fill,
             video: VideoLength::Interval,
+            video_limit: 120,
+            video_pieces: 6,
             caption: Caption::NONE
                 .toggled(CaptionPart::Folder)
                 .toggled(CaptionPart::Date),
@@ -278,6 +299,8 @@ mod tests {
             (ORDER, "size"),
             (FIT, "stretch"),
             (VIDEO, "muted"),
+            (VIDEO_LIMIT, "-5"),
+            (VIDEO_PIECES, "0"),
             (CAPTION, "exif"),
             (ASPECT, "7:5"),
             (ON_TOP, "1"),

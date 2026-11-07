@@ -637,6 +637,24 @@ mod tests {
         assert!(frames > 0);
     }
 
+    /// The picture named by `QSLIDES_IMAGE` decoded for screens of a few
+    /// sizes: the time each takes, with `--release --nocapture`.
+    #[test]
+    #[ignore]
+    fn image_file() {
+        let path = std::path::PathBuf::from(std::env::var("QSLIDES_IMAGE").expect("QSLIDES_IMAGE"));
+        let _com = Com::init();
+        for side in [1920, 3840, 1920] {
+            let started = std::time::Instant::now();
+            let image = decode_image(&path, side).unwrap();
+            println!(
+                "{side}: {:?} in {:.0} ms",
+                image.size,
+                started.elapsed().as_secs_f64() * 1e3
+            );
+        }
+    }
+
     /// The video named by `QSLIDES_VIDEO` looped: its frames' times go on
     /// over the seam without a gap (its first frame's time is not 0 in
     /// MPEG-TS from cameras), with `--nocapture`.

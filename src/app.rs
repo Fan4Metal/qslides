@@ -39,9 +39,13 @@ const UNCLOAK_TIMEOUT: Duration = Duration::from_secs(1);
 const FADE: Duration = Duration::from_millis(700);
 /// The buttons go when the pointer has not moved for this long.
 const CONTROLS_FOR: Duration = Duration::from_millis(2500);
-/// Videos are decoded no larger than this (their processor scales them):
-/// a larger frame costs more to convert and upload than it shows.
-const VIDEO_SIDE: u32 = 1920;
+/// The longer sides videos are decoded at (their processor scales them),
+/// the least that covers the window: each frame is copied off the card,
+/// converted and uploaded, 30 a second, and a 1920 frame in a widget of
+/// 480 cost about ten times the work it showed. Steps, so that a window
+/// sized a little does not make each video another size; never larger
+/// than the last.
+const VIDEO_SIDES: [u32; 5] = [640, 960, 1280, 1600, 1920];
 /// How often a tray icon the shell refused is asked for again.
 const TRAY_RETRY: Duration = Duration::from_secs(3);
 
@@ -366,6 +370,14 @@ impl App {
         screen.min(texture.max(256))
     }
 
+    /// The longer side a video is decoded at for the window as it is now
+    /// (a window made larger has its next video larger).
+    fn video_side(&self, ctx: &egui::Context) -> u32 {
+        let rect = ctx.content_rect();
+        let long = rect.width().max(rect.height()) * ctx.pixels_per_point();
+        video_side(long, self.fit, self.max_side(ctx))
+    }
+
     /// The file the slide on the screen shows, or the one to resume from.
     fn shown_path(&self) -> Option<PathBuf> {
         self.current
@@ -431,7 +443,7 @@ impl App {
         let prep = match item.kind {
             Kind::Image => Prep::Image(self.loader.request(item.path.clone(), self.max_side(ctx))),
             Kind::Video => {
-                let side = self.max_side(ctx).min(VIDEO_SIDE);
+                let side = self.video_side(ctx);
                 let looped = self.video == VideoLength::Interval;
                 Prep::Video(Video::start(&item.path, side, looped, ctx.clone()))
             }
@@ -1094,6 +1106,23 @@ fn placed(size: egui::Vec2, area: Rect, fit: Fit) -> (Rect, Rect) {
     }
 }
 
+/// The longer side to decode a video at for a window whose longer side is
+/// `window` pixels, within `max`. Fitted whole, a video shows no longer
+/// than the window's longer side; filling it, it may be cut, and twice
+/// that covers videos up to 2:1 in any window.
+fn video_side(window: f32, fit: Fit, max: u32) -> u32 {
+    let need = match fit {
+        Fit::Fit => window,
+        Fit::Fill => window * 2.0,
+    };
+    let last = VIDEO_SIDES[VIDEO_SIDES.len() - 1];
+    VIDEO_SIDES
+        .into_iter()
+        .find(|&s| s as f32 >= need)
+        .unwrap_or(last)
+        .min(max)
+}
+
 /// The parts of `area` outside `inner`: the bars above and below it across
 /// the whole width, those left and right of it between them; empty ones
 /// left out.
@@ -1229,6 +1258,17 @@ mod tests {
         let (rect, uv) = placed(vec2(100.0, 100.0), area, Fit::Fill);
         assert_eq!(rect, area);
         assert_eq!(uv, Rect::from_min_max(pos2(0.0, 0.25), pos2(1.0, 0.75)));
+    }
+
+    #[test]
+    fn videos_decoded_for_the_window() {
+        // The widget's default size: a step above its 480.
+        assert_eq!(video_side(480.0, Fit::Fit, 3840), 640);
+        assert_eq!(video_side(480.0, Fit::Fill, 3840), 960);
+        assert_eq!(video_side(1000.0, Fit::Fit, 3840), 1280);
+        // Never above the last step, nor the screen's side.
+        assert_eq!(video_side(3000.0, Fit::Fit, 3840), 1920);
+        assert_eq!(video_side(1000.0, Fit::Fill, 1366), 1366);
     }
 
     #[test]

@@ -126,7 +126,7 @@ impl Default for Settings {
             order: Order::Name,
             fit: Fit::Fit,
             video: VideoLength::Whole,
-            caption: Caption::None,
+            caption: Caption::NONE,
             aspect: None,
             layer: Layer::Normal,
             yield_full_screen: true,
@@ -201,7 +201,7 @@ impl Settings {
         storage.set_string(ORDER, self.order.name().into());
         storage.set_string(FIT, self.fit.name().into());
         storage.set_string(VIDEO, self.video.name().into());
-        storage.set_string(CAPTION, self.caption.name().into());
+        storage.set_string(CAPTION, self.caption.name());
         storage.set_string(ASPECT, aspect_name(self.aspect));
         storage.set_string(LAYER, self.layer.name().into());
         storage.remove_string(ON_TOP);
@@ -219,6 +219,7 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::show::CaptionPart;
     use eframe::Storage;
     use std::collections::HashMap;
 
@@ -248,7 +249,9 @@ mod tests {
             order: Order::Random,
             fit: Fit::Fill,
             video: VideoLength::Interval,
-            caption: Caption::Date,
+            caption: Caption::NONE
+                .toggled(CaptionPart::Folder)
+                .toggled(CaptionPart::Date),
             aspect: Some((9, 16)),
             layer: Layer::Desktop,
             yield_full_screen: false,

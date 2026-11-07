@@ -107,11 +107,12 @@ impl VideoLength {
     }
 }
 
-/// What is written in the corner of a slide.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Caption {
-    #[default]
-    None,
+/// A part of the caption written in the corner of a slide; the parts
+/// switched on are written one after the other, in this order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptionPart {
+    /// The name of the file's folder.
+    Folder,
     /// The file's name without its extension.
     Name,
     /// The day the photo or the video was taken (`dates.rs`); nothing for a
@@ -119,27 +120,76 @@ pub enum Caption {
     Date,
 }
 
-impl Caption {
-    pub const ALL: [Caption; 3] = [Caption::None, Caption::Name, Caption::Date];
+impl CaptionPart {
+    pub const ALL: [CaptionPart; 3] = [CaptionPart::Folder, CaptionPart::Name, CaptionPart::Date];
 
     pub fn label(self) -> &'static str {
         match self {
-            Caption::None => tr!("None", "Нет"),
-            Caption::Name => tr!("File name", "Имя файла"),
-            Caption::Date => tr!("Date taken", "Дата съёмки"),
+            CaptionPart::Folder => tr!("Folder", "Папка"),
+            CaptionPart::Name => tr!("File name", "Имя файла"),
+            CaptionPart::Date => tr!("Date taken", "Дата съёмки"),
         }
     }
 
     pub fn name(self) -> &'static str {
         match self {
-            Caption::None => "none",
-            Caption::Name => "name",
-            Caption::Date => "date",
+            CaptionPart::Folder => "folder",
+            CaptionPart::Name => "name",
+            CaptionPart::Date => "date",
         }
     }
 
+    fn bit(self) -> u8 {
+        1 << self as u8
+    }
+}
+
+/// The parts of the caption switched on; none: no caption.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Caption(u8);
+
+impl Caption {
+    pub const NONE: Caption = Caption(0);
+
+    pub fn has(self, part: CaptionPart) -> bool {
+        self.0 & part.bit() != 0
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The same with `part` switched on or off.
+    pub fn toggled(self, part: CaptionPart) -> Caption {
+        Caption(self.0 ^ part.bit())
+    }
+
+    /// The parts switched on, in their order.
+    pub fn parts(self) -> impl Iterator<Item = CaptionPart> {
+        CaptionPart::ALL.into_iter().filter(move |&p| self.has(p))
+    }
+
+    /// For the settings: the parts' names joined by `+`, or `none`.
+    pub fn name(self) -> String {
+        if self.is_empty() {
+            return "none".into();
+        }
+        self.parts()
+            .map(CaptionPart::name)
+            .collect::<Vec<_>>()
+            .join("+")
+    }
+
+    /// Read from [`Caption::name`] (a single part, as an earlier version
+    /// saved it, reads too); `None` if a part is unknown.
     pub fn from_name(name: &str) -> Option<Caption> {
-        Caption::ALL.into_iter().find(|c| c.name() == name)
+        if name == "none" {
+            return Some(Caption::NONE);
+        }
+        name.split('+').try_fold(Caption::NONE, |caption, n| {
+            let part = CaptionPart::ALL.into_iter().find(|p| p.name() == n)?;
+            Some(Caption(caption.0 | part.bit()))
+        })
     }
 }
 
@@ -548,6 +598,33 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .into_owned()
+    }
+
+    #[test]
+    fn caption_parts_switched_on_and_off() {
+        let c = Caption::NONE
+            .toggled(CaptionPart::Date)
+            .toggled(CaptionPart::Name);
+        assert_eq!(
+            c.parts().collect::<Vec<_>>(),
+            [CaptionPart::Name, CaptionPart::Date]
+        );
+        assert_eq!(c.name(), "name+date");
+        assert_eq!(Caption::from_name("name+date"), Some(c));
+        assert!(
+            c.toggled(CaptionPart::Name)
+                .toggled(CaptionPart::Date)
+                .is_empty()
+        );
+        assert_eq!(Caption::NONE.name(), "none");
+        assert_eq!(Caption::from_name("none"), Some(Caption::NONE));
+        // A single part, as the earlier choice saved it.
+        assert_eq!(
+            Caption::from_name("date"),
+            Some(Caption::NONE.toggled(CaptionPart::Date))
+        );
+        assert_eq!(Caption::from_name("name+exif"), None);
+        assert_eq!(Caption::from_name(""), None);
     }
 
     /// The time 100 000 files take to be put in order (on the UI thread,

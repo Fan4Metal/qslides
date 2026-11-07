@@ -21,7 +21,7 @@ qslides is a small widget for the Windows desktop that works as a photo frame. S
 
 - **A library of folders**: any number of folders, scanned with all their subfolders (see [Library](#library)).
 - **Pictures and videos**: JPEG, PNG, GIF, BMP, TIFF, JPEG XR, and HEIC, AVIF and WebP when their extensions from the Microsoft Store are installed; MP4, MOV, MKV, AVI, WMV, WebM and other videos that Windows plays, without sound.
-- **Slideshow settings**: the time each slide stays (1 second to an hour), the order (by name, by date, random), a picture fitted whole or filling the window, videos played to the end or as long as pictures, a caption with the file's name or the date it was taken (see [Slideshow](#slideshow)).
+- **Slideshow settings**: the time each slide stays (1 second to an hour), the order (by name, by date, random), a picture fitted whole or filling the window, videos played to the end or as long as pictures, a caption with the folder, the file's name and the date it was taken, each switched on by itself (see [Slideshow](#slideshow)).
 - **A frameless window** with presets of its proportions, from 16:9 to 9:16, kept while the window is sized.
 - **Start with Windows, always on top or on the desktop under all windows, only in the tray**: each is one switch of the menu; always on top, the widget gives way to full-screen programs.
 - **Quiet**: between slides the program does no work; the next slide is decoded in advance, and slides change with a short cross-fade. While the computer is locked or the display is off, the show stands still.
@@ -52,7 +52,7 @@ Everything else is in the menu of the right mouse button. A click on the tray ic
 | **Order** | **By name**, **By date**, **Random** |
 | **Picture** | **Fit whole** or **Fill the window** |
 | **Videos** | **To the end** or **As long as pictures** |
-| **Caption** | **None**, **File name** or **Date taken**, in the bottom left corner of the slide |
+| **Caption** | **Folder**, **File name**, **Date taken**: each switched on or off by itself, those switched on written together in the bottom left corner of the slide |
 | **Window proportions** | **Any**, 16:9, 16:10, 3:2, 4:3, 5:4, 1:1, 4:5, 3:4, 2:3, 9:16 |
 | **Folders** | The library: each folder with buttons to open it in Explorer and to remove it, **Add a folder…**, **Look for new files** |
 | **Always on top** | The window stays above other windows; with **Not over full-screen programs** (on by default), it goes under a full-screen game, film or presentation in front on its screen, and comes back above the others when that one closes or another window is activated |
@@ -81,7 +81,7 @@ The folders are listed one per line in `library.txt`, next to the settings file:
 
 A picture is scaled down to the size of the screen when it is decoded and turned upright by its EXIF orientation. **Fit whole** shows all of it with black bars where its proportions differ from the window's; **Fill the window** covers the window and cuts the edges of the picture.
 
-The caption is written in the bottom left corner of the slide and gives way to the buttons while they are shown. **File name** shows the name of the file without its extension. **Date taken** shows the day a photo was taken (from its EXIF data) or a video was recorded, as Windows reads it; a file without such a date has no caption.
+The caption is written in the bottom left corner of the slide and gives way to the buttons while they are shown. Its parts are switched on separately, and those switched on are written one after the other, separated by dots: **Folder** shows the name of the file's folder, **File name** the name of the file without its extension, **Date taken** the day a photo was taken (from its EXIF data) or a video was recorded, as Windows reads it. A file without such a date has no date in its caption; with no part switched on, there is no caption.
 
 A video is shown either to its end, however long it is (**Videos: To the end**), or for the same time as a picture (**Videos: As long as pictures**): a longer one is cut off, a shorter one starts again from the beginning. The sound of a video is never played. Videos are decoded on the graphics card when Windows can, so 4K videos of a phone play smoothly; a video is decoded no larger than the window needs, and a slide shows at most 30 frames a second. A file that cannot be decoded is skipped until the next scan.
 

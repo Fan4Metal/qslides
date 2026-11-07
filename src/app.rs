@@ -26,7 +26,7 @@ use crate::loader::{Done, Loader};
 use crate::media::{Video, VideoMsg};
 use crate::menu::Cmd;
 use crate::settings::Settings;
-use crate::show::{Caption, Fit, Layer, Playlist, VideoLength};
+use crate::show::{Caption, CaptionPart, Fit, Layer, Playlist, VideoLength};
 use crate::ui::about::AboutWindow;
 use crate::ui::icons::Icon;
 use crate::update::Updates;
@@ -210,7 +210,7 @@ pub struct App {
     fit: Fit,
     video: VideoLength,
     caption: Caption,
-    /// The dates files were taken, for `Caption::Date`.
+    /// The dates files were taken, for `CaptionPart::Date`.
     dates: crate::dates::Dates,
     aspect: Option<(u32, u32)>,
     layer: Layer,
@@ -1197,18 +1197,23 @@ impl App {
         wake
     }
 
-    /// The caption of the slide on the screen, if there is one to show (a
-    /// date is shown once it has been read).
+    /// The caption of the slide on the screen: the parts switched on that
+    /// it has, joined by a dot (a date once it has been read); `None` when
+    /// there are none.
     fn caption_text(&mut self) -> Option<String> {
-        let path = &self.current.as_ref()?.item.path;
-        match self.caption {
-            Caption::None => None,
-            Caption::Name => path.file_stem().map(|s| s.to_string_lossy().into_owned()),
-            Caption::Date => {
-                let path = path.clone();
-                self.dates.get(&path).map(crate::dates::label)
-            }
+        if self.caption.is_empty() {
+            return None;
         }
+        let path = self.current.as_ref()?.item.path.clone();
+        let lossy = |s: &std::ffi::OsStr| s.to_string_lossy().into_owned();
+        let parts: Vec<String> = (self.caption.parts())
+            .filter_map(|part| match part {
+                CaptionPart::Folder => path.parent().and_then(|p| p.file_name()).map(lossy),
+                CaptionPart::Name => path.file_stem().map(lossy),
+                CaptionPart::Date => self.dates.get(&path).map(crate::dates::label),
+            })
+            .collect();
+        (!parts.is_empty()).then(|| parts.join(" · "))
     }
 
     fn tray_tip(&mut self) {
@@ -1363,7 +1368,7 @@ impl eframe::App for App {
             wake = Some(wake.map_or(d, |w| w.min(d)));
         }
         // The next slide's date read ahead, ready when it comes.
-        if self.caption == Caption::Date
+        if self.caption.has(CaptionPart::Date)
             && let Some(up) = &self.upcoming
         {
             let path = up.item.path.clone();

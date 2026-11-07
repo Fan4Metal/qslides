@@ -17,8 +17,8 @@ use std::path::PathBuf;
 use egui::{Key, RichText, Ui};
 
 use crate::show::{
-    ASPECTS, Caption, Fit, INTERVALS, Layer, Order, VideoLength, aspect_label, interval_label,
-    nearest_interval,
+    ASPECTS, Caption, CaptionPart, Fit, INTERVALS, Layer, Order, VideoLength, aspect_label,
+    interval_label, nearest_interval,
 };
 use crate::ui::OwnWindow;
 use crate::ui::icons::Icon;
@@ -39,6 +39,7 @@ pub enum Cmd {
     Order(Order),
     Fit(Fit),
     Video(VideoLength),
+    /// The caption with a part switched on or off.
     Caption(Caption),
     Aspect(Option<(u32, u32)>),
     /// The window above all others or on the desktop, switched on or off.
@@ -310,14 +311,18 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
     ) {
         cmds.push(Cmd::Video(v));
     }
+    // Switches that add up, not a choice: each part on or off.
     heading(ui, tr!("Caption", "Подпись"));
-    if let Some(c) = choice(
-        ui,
-        s.caption,
-        Caption::ALL.map(|c| (c, c.label().to_owned())),
-    ) {
-        cmds.push(Cmd::Caption(c));
-    }
+    ui.horizontal_wrapped(|ui| {
+        for part in CaptionPart::ALL {
+            if ui
+                .selectable_label(s.caption.has(part), part.label())
+                .clicked()
+            {
+                cmds.push(Cmd::Caption(s.caption.toggled(part)));
+            }
+        }
+    });
     heading(ui, tr!("Window proportions", "Пропорции окна"));
     if let Some(a) = choice(ui, s.aspect, ASPECTS.map(|a| (a, aspect_label(a)))) {
         cmds.push(Cmd::Aspect(a));
@@ -462,7 +467,7 @@ mod tests {
             order: Order::Random,
             fit: Fit::Fill,
             video: VideoLength::Whole,
-            caption: Caption::Name,
+            caption: Caption::NONE.toggled(CaptionPart::Name),
             aspect: Some((16, 9)),
             layer: Layer::Top,
             yield_full_screen: true,

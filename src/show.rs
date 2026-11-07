@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use crate::library::{Item, key_cmp, sort_key};
+use crate::library::{Item, Kind, key_cmp, sort_key};
 
 /// The order the files are shown in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -104,6 +104,76 @@ impl VideoLength {
 
     pub fn from_name(name: &str) -> Option<VideoLength> {
         VideoLength::ALL.into_iter().find(|v| v.name() == name)
+    }
+}
+
+/// The kinds of files the show takes from the library, switched on
+/// separately; never none (the last one stays on).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Kinds(u8);
+
+impl Default for Kinds {
+    fn default() -> Self {
+        Kinds::ALL
+    }
+}
+
+impl Kinds {
+    pub const ALL: Kinds = Kinds(0b11);
+    /// In the menu's order.
+    pub const EACH: [Kind; 2] = [Kind::Image, Kind::Video];
+
+    fn bit(kind: Kind) -> u8 {
+        match kind {
+            Kind::Image => 1,
+            Kind::Video => 2,
+        }
+    }
+
+    pub fn has(self, kind: Kind) -> bool {
+        self.0 & Kinds::bit(kind) != 0
+    }
+
+    /// The same with `kind` switched on or off; the last one on stays on.
+    pub fn toggled(self, kind: Kind) -> Kinds {
+        match self.0 ^ Kinds::bit(kind) {
+            0 => self,
+            bits => Kinds(bits),
+        }
+    }
+
+    pub fn label(kind: Kind) -> &'static str {
+        match kind {
+            Kind::Image => tr!("Pictures", "Картинки"),
+            Kind::Video => tr!("Videos", "Видео"),
+        }
+    }
+
+    fn kind_name(kind: Kind) -> &'static str {
+        match kind {
+            Kind::Image => "pictures",
+            Kind::Video => "videos",
+        }
+    }
+
+    /// For the settings: the kinds' names joined by `+`.
+    pub fn name(self) -> String {
+        (Kinds::EACH.into_iter())
+            .filter(|&k| self.has(k))
+            .map(Kinds::kind_name)
+            .collect::<Vec<_>>()
+            .join("+")
+    }
+
+    /// Read from [`Kinds::name`]; `None` for an unknown kind or none.
+    pub fn from_name(name: &str) -> Option<Kinds> {
+        let bits = name.split('+').try_fold(0, |bits, n| {
+            let kind = Kinds::EACH
+                .into_iter()
+                .find(|&k| Kinds::kind_name(k) == n)?;
+            Some(bits | Kinds::bit(kind))
+        })?;
+        (bits != 0).then_some(Kinds(bits))
     }
 }
 
@@ -597,7 +667,6 @@ impl Playlist {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::library::Kind;
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime};
 
@@ -622,6 +691,21 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .into_owned()
+    }
+
+    #[test]
+    fn kinds_switched_on_and_off() {
+        let videos = Kinds::ALL.toggled(Kind::Image);
+        assert!(!videos.has(Kind::Image) && videos.has(Kind::Video));
+        // The last kind on stays on.
+        assert_eq!(videos.toggled(Kind::Video), videos);
+        assert_eq!(videos.toggled(Kind::Image), Kinds::ALL);
+        assert_eq!(Kinds::ALL.name(), "pictures+videos");
+        assert_eq!(videos.name(), "videos");
+        assert_eq!(Kinds::from_name("pictures+videos"), Some(Kinds::ALL));
+        assert_eq!(Kinds::from_name("videos"), Some(videos));
+        assert_eq!(Kinds::from_name(""), None);
+        assert_eq!(Kinds::from_name("pictures+gifs"), None);
     }
 
     #[test]

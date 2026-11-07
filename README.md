@@ -21,7 +21,7 @@ qslides is a small widget for the Windows desktop that works as a photo frame. S
 
 - **A library of folders**: any number of folders, scanned with all their subfolders (see [Library](#library)).
 - **Pictures and videos**: JPEG, PNG, GIF, BMP, TIFF, JPEG XR, and HEIC, AVIF and WebP when their extensions from the Microsoft Store are installed; MP4, MOV, MKV, AVI, WMV, WebM and other videos that Windows plays, without sound.
-- **Slideshow settings**: the time each slide stays (1 second to an hour), the order (by name, by date, random), a picture fitted whole or filling the window, videos played to the end (at most for a time chosen) or as long as pictures, a long video shown in several pieces, a caption with the folder, the file's name and the date it was taken, each switched on by itself (see [Slideshow](#slideshow)).
+- **Slideshow settings**: the time each slide stays (1 second to an hour), the order (by name, by date, random), pictures, videos or both, a picture fitted whole or filling the window, videos played to the end (at most for a time chosen) or as long as pictures, a long video shown in several pieces, a caption with the folder, the file's name and the date it was taken, each switched on by itself (see [Slideshow](#slideshow)).
 - **A frameless window** with presets of its proportions, from 16:9 to 9:16, kept while the window is sized.
 - **Start with Windows, always on top or on the desktop under all windows, only in the tray**: each is one switch of the menu; always on top, the widget gives way to full-screen programs.
 - **Quiet**: between slides the program does no work; the next slide is decoded in advance, and slides change with a short cross-fade. While the computer is locked or the display is off, the show stands still.
@@ -50,6 +50,7 @@ Everything else is in the menu of the right mouse button. A click on the tray ic
 | Buttons at the top | **Previous**, **Pause**, **Next** and the number of the file shown out of all the files of the show (`12 / 340`); **Open the file** in its program, **Show in its folder** in Explorer |
 | **Show each for** | A slider for the time a slide stays, from 1 second to 1 hour |
 | **Order** | **By name**, **By date**, **Random** |
+| **Show** | **Pictures**, **Videos**: each switched on or off by itself, at least one stays on |
 | **Picture** | **Fit whole** or **Fill the window** |
 | **Videos** | **To the end** or **As long as pictures**; **No longer than** (with **To the end**): no limit, or 10 seconds to 1 hour; **In pieces**: 1 to 10 |
 | **Caption** | **Folder**, **File name**, **Date taken**: each switched on or off by itself, those switched on written together in the bottom left corner of the slide |
@@ -77,7 +78,7 @@ The folders are listed one per line in `library.txt`, next to the settings file:
 
 ### Slideshow
 
-**By name** shows the folders in the order they were added to the library and, inside each, the files and subfolders by name as Explorer sorts them: `2.jpg` before `10.jpg`. **By date** goes from the oldest file to the newest by the time it was last changed. **Random** shows every file once per round in a shuffled order and shuffles anew for the next round.
+**By name** shows the folders in the order they were added to the library and, inside each, the files and subfolders by name as Explorer sorts them: `2.jpg` before `10.jpg`. **By date** goes from the oldest file to the newest by the time it was last changed. **Random** shows every file once per round in a shuffled order and shuffles anew for the next round. **Show** limits the slideshow to the pictures or to the videos of the library; the library itself stays as it is.
 
 A picture is scaled down to the size of the screen when it is decoded and turned upright by its EXIF orientation. **Fit whole** shows all of it with black bars where its proportions differ from the window's; **Fill the window** covers the window and cuts the edges of the picture.
 

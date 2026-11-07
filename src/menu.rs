@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use egui::{Key, RichText, Ui};
 
 use crate::show::{
-    ASPECTS, Caption, CaptionPart, Fit, INTERVALS, Layer, MAX_PIECES, Order, VIDEO_LIMITS,
+    ASPECTS, Caption, CaptionPart, Fit, INTERVALS, Kinds, Layer, MAX_PIECES, Order, VIDEO_LIMITS,
     VideoLength, aspect_label, interval_label, nearest_interval, nearest_video_limit,
     video_limit_label,
 };
@@ -38,6 +38,8 @@ pub enum Cmd {
     Rescan,
     Interval(u32),
     Order(Order),
+    /// The kinds of files shown, one switched on or off.
+    Kinds(Kinds),
     Fit(Fit),
     Video(VideoLength),
     /// Seconds a video shown to its end may take; 0: no limit.
@@ -83,6 +85,7 @@ pub struct State {
     pub unreachable: Vec<bool>,
     pub interval: u32,
     pub order: Order,
+    pub kinds: Kinds,
     pub fit: Fit,
     pub video: VideoLength,
     pub video_limit: u32,
@@ -308,6 +311,20 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
     if let Some(o) = choice(ui, s.order, Order::ALL.map(|o| (o, o.label().to_owned()))) {
         cmds.push(Cmd::Order(o));
     }
+    // Switches that add up, as the caption's; the last one on stays.
+    heading(ui, tr!("Show", "Показывать"));
+    ui.horizontal_wrapped(|ui| {
+        for kind in Kinds::EACH {
+            let toggled = s.kinds.toggled(kind);
+            if ui
+                .selectable_label(s.kinds.has(kind), Kinds::label(kind))
+                .clicked()
+                && toggled != s.kinds
+            {
+                cmds.push(Cmd::Kinds(toggled));
+            }
+        }
+    });
     heading(ui, tr!("Picture", "Картинка"));
     if let Some(f) = choice(ui, s.fit, Fit::ALL.map(|f| (f, f.label().to_owned()))) {
         cmds.push(Cmd::Fit(f));
@@ -511,6 +528,7 @@ mod tests {
             unreachable: vec![false, true],
             interval: 10,
             order: Order::Random,
+            kinds: Kinds::ALL,
             fit: Fit::Fill,
             video: VideoLength::Whole,
             video_limit: 120,

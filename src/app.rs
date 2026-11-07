@@ -26,7 +26,7 @@ use crate::loader::{Done, Loader};
 use crate::media::{Video, VideoMsg};
 use crate::menu::Cmd;
 use crate::settings::Settings;
-use crate::show::{Caption, CaptionPart, Fit, Layer, Playlist, VideoLength};
+use crate::show::{Caption, CaptionPart, Fit, Kinds, Layer, Playlist, VideoLength};
 use crate::ui::about::AboutWindow;
 use crate::ui::icons::Icon;
 use crate::update::Updates;
@@ -221,6 +221,10 @@ struct Upcoming {
 
 pub struct App {
     folders: Vec<PathBuf>,
+    /// The files of the last scan, all kinds; the show takes those of
+    /// `kinds`.
+    library: Vec<Item>,
+    kinds: Kinds,
     playlist: Playlist,
     /// The file to go on from once the first scan is done.
     resume: Option<PathBuf>,
@@ -340,6 +344,8 @@ impl App {
         let scanning = !folders.is_empty();
         let mut app = Self {
             folders,
+            library: Vec::new(),
+            kinds: settings.kinds,
             playlist: Playlist::new(settings.order),
             resume: settings.last_file.clone(),
             scanning,
@@ -421,6 +427,7 @@ impl App {
         self.scanning = !self.folders.is_empty();
         self.scan_retry = None;
         if self.folders.is_empty() {
+            self.library.clear();
             self.playlist.set_items(Vec::new(), None);
             self.current = None;
             self.upcoming = None;
@@ -500,8 +507,19 @@ impl App {
             self.scan_retry = Some(Instant::now() + wait);
         }
         let keep = self.shown_path();
-        let kept = self.playlist.set_items(scanned.items, keep.as_deref());
+        self.library = scanned.items;
         self.resume = None;
+        self.refill(keep);
+    }
+
+    /// The show made again from the library, of the kinds shown, going on
+    /// from `keep` if it is still in it.
+    fn refill(&mut self, keep: Option<PathBuf>) {
+        let items = (self.library.iter())
+            .filter(|i| self.kinds.has(i.kind))
+            .cloned()
+            .collect();
+        let kept = self.playlist.set_items(items, keep.as_deref());
         // The upcoming slide may no longer be the next one.
         self.upcoming = None;
         if self.playlist.is_empty() {
@@ -511,7 +529,7 @@ impl App {
                 // The slide on the screen is where the playlist is now.
                 slide.step = self.step;
             } else {
-                // Its file is no longer in the library: it stays until the
+                // Its file is no longer in the show: it stays until the
                 // playlist's first is ready, which is not skipped.
                 self.step += 1;
             }
@@ -764,6 +782,7 @@ impl App {
                 .collect(),
             interval: self.interval,
             order: self.playlist.order(),
+            kinds: self.kinds,
             fit: self.fit,
             video: self.video,
             video_limit: self.video_limit,
@@ -832,6 +851,11 @@ impl App {
                 // does (a slide's step is left as it is).
                 self.playlist.set_order(o);
                 self.upcoming = None;
+            }
+            Cmd::Kinds(k) => {
+                self.kinds = k;
+                let keep = self.shown_path();
+                self.refill(keep);
             }
             Cmd::Fit(f) => self.fit = f,
             Cmd::Caption(c) => self.caption = c,
@@ -1130,6 +1154,19 @@ impl App {
                     "The library's folders cannot be read now",
                     "Папки библиотеки сейчас недоступны"
                 )
+            } else if self.playlist.is_empty() && !self.library.is_empty() {
+                // All of the other kind.
+                if self.kinds.has(Kind::Image) {
+                    tr!(
+                        "No pictures in the library's folders",
+                        "В папках библиотеки нет картинок"
+                    )
+                } else {
+                    tr!(
+                        "No videos in the library's folders",
+                        "В папках библиотеки нет видео"
+                    )
+                }
             } else if self.playlist.is_empty() {
                 tr!(
                     "No pictures or videos in the library's folders",
@@ -1510,6 +1547,7 @@ impl eframe::App for App {
             last_update_check: self.updates.last_check,
             interval: self.interval,
             order: self.playlist.order(),
+            kinds: self.kinds,
             fit: self.fit,
             video: self.video,
             video_limit: self.video_limit,

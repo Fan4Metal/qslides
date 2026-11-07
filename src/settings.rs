@@ -12,13 +12,14 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use crate::i18n::LangChoice;
-use crate::show::{Caption, Fit, Layer, Order, VideoLength, aspect_from_name, aspect_name};
+use crate::show::{Caption, Fit, Kinds, Layer, Order, VideoLength, aspect_from_name, aspect_name};
 
 const LANGUAGE: &str = "language";
 const CHECK_UPDATES: &str = "check_updates";
 const LAST_UPDATE_CHECK: &str = "last_update_check";
 const INTERVAL: &str = "interval";
 const ORDER: &str = "order";
+const KINDS: &str = "kinds";
 const FIT: &str = "fit";
 const VIDEO: &str = "video";
 const VIDEO_LIMIT: &str = "video_limit";
@@ -102,6 +103,8 @@ pub struct Settings {
     /// Seconds a slide stays (`show::INTERVALS`, though any number reads).
     pub interval: u32,
     pub order: Order,
+    /// Pictures, videos or both.
+    pub kinds: Kinds,
     pub fit: Fit,
     pub video: VideoLength,
     /// Seconds a video shown to its end may take at most; 0: no limit.
@@ -131,6 +134,7 @@ impl Default for Settings {
             last_update_check: 0,
             interval: 10,
             order: Order::Name,
+            kinds: Kinds::ALL,
             fit: Fit::Fit,
             video: VideoLength::Whole,
             video_limit: 0,
@@ -174,6 +178,10 @@ impl Settings {
                 .as_deref()
                 .and_then(Order::from_name)
                 .unwrap_or(d.order),
+            kinds: get(KINDS)
+                .as_deref()
+                .and_then(Kinds::from_name)
+                .unwrap_or(d.kinds),
             fit: get(FIT)
                 .as_deref()
                 .and_then(Fit::from_name)
@@ -216,6 +224,7 @@ impl Settings {
         storage.set_string(LAST_UPDATE_CHECK, self.last_update_check.to_string());
         storage.set_string(INTERVAL, self.interval.to_string());
         storage.set_string(ORDER, self.order.name().into());
+        storage.set_string(KINDS, self.kinds.name());
         storage.set_string(FIT, self.fit.name().into());
         storage.set_string(VIDEO, self.video.name().into());
         storage.set_string(VIDEO_LIMIT, self.video_limit.to_string());
@@ -266,6 +275,7 @@ mod tests {
             last_update_check: 1_790_000_000,
             interval: 300,
             order: Order::Random,
+            kinds: Kinds::ALL.toggled(crate::library::Kind::Image),
             fit: Fit::Fill,
             video: VideoLength::Interval,
             video_limit: 120,
@@ -297,6 +307,7 @@ mod tests {
             (LAST_UPDATE_CHECK, "soon"),
             (INTERVAL, "0"),
             (ORDER, "size"),
+            (KINDS, ""),
             (FIT, "stretch"),
             (VIDEO, "muted"),
             (VIDEO_LIMIT, "-5"),

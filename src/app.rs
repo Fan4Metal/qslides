@@ -985,7 +985,7 @@ impl App {
             // Paused, the buttons away: a small mark in the corner says so.
             let r = 9.0;
             let center = Pos2::new(area.left() + r + 8.0, area.top() + r + 8.0);
-            crate::ui::round_button(ui, Icon::Pause, center, r, 0.8, "");
+            crate::ui::round_mark(ui, Icon::Pause, center, r, 0.8);
         }
 
         // The cross that ends the program, in the top right corner, with

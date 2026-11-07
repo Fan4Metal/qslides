@@ -67,16 +67,41 @@ pub fn round_button(
     let rect = egui::Rect::from_center_size(center, egui::vec2(radius * 2.0, radius * 2.0));
     let id = ui.id().with(("round", icon));
     let response = ui.interact(rect, id, Sense::click());
-    let ground = if response.hovered() { 200 } else { 140 };
-    let fill = Color32::from_black_alpha((ground as f32 * opacity) as u8);
-    ui.painter().circle_filled(center, radius, fill);
-    let ink = Color32::from_white_alpha((235.0 * opacity) as u8);
-    icons::paint(ui.painter(), icon, center, radius * 0.95, ink, fill);
+    let ground = if response.hovered() { 200.0 } else { 140.0 };
+    paint_round(
+        ui.painter(),
+        icon,
+        center,
+        radius,
+        ground * opacity,
+        opacity,
+    );
     if opacity > 0.5 {
         response.on_hover_text(tip)
     } else {
         response
     }
+}
+
+/// A mark painted as a [`round_button`] that is not one (the pause in the
+/// corner): it takes no clicks, so a click, a double click or the right
+/// button on it goes to the widget under it, and it has no tip.
+pub fn round_mark(ui: &Ui, icon: Icon, center: Pos2, radius: f32, opacity: f32) {
+    paint_round(ui.painter(), icon, center, radius, 140.0 * opacity, opacity);
+}
+
+fn paint_round(
+    painter: &egui::Painter,
+    icon: Icon,
+    center: Pos2,
+    radius: f32,
+    ground: f32,
+    opacity: f32,
+) {
+    let fill = Color32::from_black_alpha(ground as u8);
+    painter.circle_filled(center, radius, fill);
+    let ink = Color32::from_white_alpha((235.0 * opacity) as u8);
+    icons::paint(painter, icon, center, radius * 0.95, ink, fill);
 }
 
 /// The cross over the picture that ends the program: a round button as

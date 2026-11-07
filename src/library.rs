@@ -145,16 +145,17 @@ pub fn save(folders: &[PathBuf]) {
     }
 }
 
-/// Paths compared as Windows does: without regard to case.
+/// Paths compared as Windows does: without regard to case. Allocates
+/// nothing: the file shown is looked for among all the library's.
 pub fn same_path(a: &Path, b: &Path) -> bool {
-    a.as_os_str()
-        .to_string_lossy()
-        .to_lowercase()
-        .trim_end_matches('\\')
-        == b.as_os_str()
-            .to_string_lossy()
-            .to_lowercase()
-            .trim_end_matches('\\')
+    let (a, b) = (
+        a.as_os_str().to_string_lossy(),
+        b.as_os_str().to_string_lossy(),
+    );
+    let (a, b) = (a.trim_end_matches('\\'), b.trim_end_matches('\\'));
+    a.chars()
+        .flat_map(char::to_lowercase)
+        .eq(b.chars().flat_map(char::to_lowercase))
 }
 
 /// The outcome of a scan.
@@ -250,49 +251,70 @@ fn walk(dir: &Path, root: usize, out: &mut Vec<Item>) {
     }
 }
 
-/// Paths in the order of Explorer: folder by folder, names compared without
-/// regard to case and with runs of digits as numbers ("2" before "10").
-pub fn path_cmp(a: &Path, b: &Path) -> Ordering {
-    let mut ac = a.components();
-    let mut bc = b.components();
-    loop {
-        match (ac.next(), bc.next()) {
-            (None, None) => return Ordering::Equal,
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
-            (Some(x), Some(y)) => {
-                let o = natural_cmp(
-                    &x.as_os_str().to_string_lossy(),
-                    &y.as_os_str().to_string_lossy(),
-                );
-                if o != Ordering::Equal {
-                    return o;
-                }
-            }
+/// A path as [`key_cmp`] compares it: its components in lowercase, joined
+/// by NUL, which comes before any character, so that a name ends before
+/// any longer one and the order stays folder by folder. Made once a sort,
+/// not in each of its comparisons (100 000 files took 1.8 s to sort by
+/// name on the UI thread, allocating in every comparison).
+pub fn sort_key(path: &Path) -> String {
+    let mut key = String::new();
+    for (n, c) in path.components().enumerate() {
+        if n > 0 {
+            key.push('\0');
         }
+        key.push_str(&c.as_os_str().to_string_lossy().to_lowercase());
     }
+    key
+}
+
+/// Paths, as their [`sort_key`]s, in the order of Explorer: folder by
+/// folder, names compared without regard to case and with runs of digits
+/// as numbers ("2" before "10").
+pub fn key_cmp(a: &str, b: &str) -> Ordering {
+    natural_lower(a, b)
+}
+
+/// [`key_cmp`] of two paths.
+#[cfg(test)]
+fn path_cmp(a: &Path, b: &Path) -> Ordering {
+    key_cmp(&sort_key(a), &sort_key(b))
 }
 
 /// `a` and `b` compared without regard to case, with runs of digits
 /// compared as numbers.
-pub fn natural_cmp(a: &str, b: &str) -> Ordering {
-    let (a, b) = (a.to_lowercase(), b.to_lowercase());
-    let (mut a, mut b) = (a.chars().peekable(), b.chars().peekable());
+#[cfg(test)]
+fn natural_cmp(a: &str, b: &str) -> Ordering {
+    natural_lower(&a.to_lowercase(), &b.to_lowercase())
+}
+
+/// [`natural_cmp`] of strings already in lowercase, allocating nothing.
+fn natural_lower(a: &str, b: &str) -> Ordering {
+    let digits = |s: &str, from: usize| {
+        from + s.as_bytes()[from..]
+            .iter()
+            .take_while(|c| c.is_ascii_digit())
+            .count()
+    };
+    // The bytes the two have in common at the start (the library's folders
+    // in the paths of a sort) are skipped at once: back to the start of
+    // the character and of the run of digits there, they are where the
+    // comparison of the rest begins in both, all before it equal.
+    let mut start = a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count();
+    while start > 0 && !(a.is_char_boundary(start) && b.is_char_boundary(start)) {
+        start -= 1;
+    }
+    while start > 0 && a.as_bytes()[start - 1].is_ascii_digit() {
+        start -= 1;
+    }
+    let (mut i, mut j) = (start, start);
     loop {
-        match (a.peek().copied(), b.peek().copied()) {
+        match (a[i..].chars().next(), b[j..].chars().next()) {
             (None, None) => return Ordering::Equal,
             (None, Some(_)) => return Ordering::Less,
             (Some(_), None) => return Ordering::Greater,
             (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
-                let take = |it: &mut std::iter::Peekable<std::str::Chars>| {
-                    let mut digits = String::new();
-                    while let Some(c) = it.peek().copied().filter(char::is_ascii_digit) {
-                        digits.push(c);
-                        it.next();
-                    }
-                    digits
-                };
-                let (da, db) = (take(&mut a), take(&mut b));
+                let (ie, je) = (digits(a, i), digits(b, j));
+                let (da, db) = (&a[i..ie], &b[j..je]);
                 let (ta, tb) = (da.trim_start_matches('0'), db.trim_start_matches('0'));
                 let o = ta
                     .len()
@@ -302,13 +324,14 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
                 if o != Ordering::Equal {
                     return o;
                 }
+                (i, j) = (ie, je);
             }
             (Some(x), Some(y)) => {
                 if x != y {
                     return x.cmp(&y);
                 }
-                a.next();
-                b.next();
+                i += x.len_utf8();
+                j += y.len_utf8();
             }
         }
     }
@@ -342,6 +365,31 @@ mod tests {
             path_cmp(Path::new(r"C:\p\2\x.jpg"), Path::new(r"C:\p\10\a.jpg")),
             Ordering::Less
         );
+        // Folder by folder: a name ends before a longer one whatever
+        // follows it ("a" before "a-b", though '\' is after '-').
+        assert_eq!(
+            path_cmp(Path::new(r"C:\p\a\z.jpg"), Path::new(r"C:\p\a-b\a.jpg")),
+            Ordering::Less
+        );
+        // The common start skipped back to its run of digits: 12 after 9.
+        assert_eq!(
+            path_cmp(Path::new(r"C:\p\img12.jpg"), Path::new(r"C:\p\img19.jpg")),
+            Ordering::Less
+        );
+        assert_eq!(
+            path_cmp(Path::new(r"C:\p\img12.jpg"), Path::new(r"C:\p\img9.jpg")),
+            Ordering::Greater
+        );
+        assert_eq!(natural_cmp("Фото 10", "фото 9"), Ordering::Greater);
+        assert_eq!(natural_cmp("Фото", "фото"), Ordering::Equal);
+        assert!(same_path(
+            Path::new(r"C:\Фото\A.jpg"),
+            Path::new(r"c:\фото\a.JPG")
+        ));
+        assert!(!same_path(
+            Path::new(r"C:\Фото\A.jpg"),
+            Path::new(r"C:\Фото\B.jpg")
+        ));
     }
 
     #[test]

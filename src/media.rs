@@ -430,6 +430,10 @@ fn decode_video(
     let mut offset = 0i64;
     let mut last = 0i64;
     let mut frames = 0u64;
+    // Played again from the start: the offset is set by the round's first
+    // frame, whose time need not be 0 (MPEG-TS from cameras, an MP4 with
+    // an edit list), else every round began with a stop that long.
+    let mut rewound = false;
     loop {
         if stop.load(Relaxed) {
             return Ok(());
@@ -448,7 +452,7 @@ fn decode_video(
         .map_err(|e| err("ReadSample", e))?;
         if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
             if looped && frames > 0 {
-                offset = last + SECOND / 30;
+                rewound = true;
                 let start = PROPVARIANT::from(0i64);
                 unsafe { reader.SetCurrentPosition(&GUID::zeroed(), &start) }
                     .map_err(|e| err("seek", e))?;
@@ -465,6 +469,10 @@ fn decode_video(
             continue;
         }
         let Some(sample) = sample else { continue };
+        if rewound {
+            rewound = false;
+            offset = last + SECOND / 30 - time;
+        }
         if frames > 0 && offset + time < last + FRAME_STEP {
             continue;
         }
@@ -627,6 +635,44 @@ mod tests {
             frames as f64 / secs
         );
         assert!(frames > 0);
+    }
+
+    /// The video named by `QSLIDES_VIDEO` looped: its frames' times go on
+    /// over the seam without a gap (its first frame's time is not 0 in
+    /// MPEG-TS from cameras), with `--nocapture`.
+    #[test]
+    #[ignore]
+    fn video_loops() {
+        let path = std::path::PathBuf::from(std::env::var("QSLIDES_VIDEO").expect("QSLIDES_VIDEO"));
+        let times = |looped: bool, until: Option<i64>| {
+            let video = Video::start(&path, 320, looped, egui::Context::default());
+            let mut times = Vec::new();
+            loop {
+                match video.rx.recv_timeout(std::time::Duration::from_secs(10)) {
+                    Ok(VideoMsg::Frame(t, _)) => {
+                        times.push(t);
+                        if until.is_some_and(|u| t > u) {
+                            return times;
+                        }
+                    }
+                    Ok(VideoMsg::End) => return times,
+                    Ok(VideoMsg::Failed(e)) => panic!("{e}"),
+                    Err(e) => panic!("{e}"),
+                }
+            }
+        };
+        let once = times(false, None);
+        let (first, end) = (once[0], *once.last().unwrap());
+        let looped = times(true, Some(end + SECOND));
+        let gap = looped.windows(2).map(|w| w[1] - w[0]).max().unwrap();
+        println!(
+            "first frame at {:.3} s, last at {:.3} s, longest gap looped {:.3} s",
+            first as f64 / SECOND as f64,
+            end as f64 / SECOND as f64,
+            gap as f64 / SECOND as f64
+        );
+        assert!(looped.windows(2).all(|w| w[1] > w[0]));
+        assert!(gap < SECOND / 5, "a stop at the seam");
     }
 
     /// Every frame of the video named by `QSLIDES_VIDEO` decoded, scaled to

@@ -96,34 +96,39 @@ struct Playing {
 }
 
 impl Playing {
-    /// Show the frames due at `elapsed`; the time until the next one, if
-    /// one is waiting.
+    /// Show the frame due at `elapsed`; the time until the next one, if
+    /// one is waiting. Behind (the window dragged, a long frame), only the
+    /// last of the frames due goes into the texture: each one set was
+    /// uploaded, though only the last was seen.
     fn pump(&mut self, elapsed: Duration) -> Option<Duration> {
         let now = self.first + (elapsed.as_nanos() / 100) as i64;
-        loop {
+        let mut shown = None;
+        let wait = loop {
             if self.pending.is_none() {
                 match self.video.rx.try_recv() {
                     Ok(VideoMsg::Frame(t, image)) => self.pending = Some((t, image)),
                     Ok(VideoMsg::End) | Err(TryRecvError::Disconnected) => {
                         self.ended = true;
-                        return None;
+                        break None;
                     }
                     Ok(VideoMsg::Failed(e)) => {
                         log::info!("video stopped: {e}");
                         self.ended = true;
-                        return None;
+                        break None;
                     }
-                    Err(TryRecvError::Empty) => return None,
+                    Err(TryRecvError::Empty) => break None,
                 }
             }
             let due = self.pending.as_ref().map_or(i64::MAX, |(t, _)| *t);
             if due > now {
-                return Some(Duration::from_nanos(((due - now) * 100) as u64));
+                break Some(Duration::from_nanos(((due - now) * 100) as u64));
             }
-            if let Some((_, image)) = self.pending.take() {
-                self.texture.set(image, TextureOptions::LINEAR);
-            }
+            shown = self.pending.take().map(|(_, image)| image);
+        };
+        if let Some(image) = shown {
+            self.texture.set(image, TextureOptions::LINEAR);
         }
+        wait
     }
 }
 

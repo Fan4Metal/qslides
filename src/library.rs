@@ -164,6 +164,10 @@ pub struct Scanned {
     /// later scan).
     pub generation: u64,
     pub items: Vec<Item>,
+    /// The library's folders (their indexes) that could not be read: a
+    /// network drive not connected yet, a removed USB stick. Told from
+    /// folders that are only empty.
+    pub unreachable: Vec<usize>,
 }
 
 /// List the pictures and videos of `folders` on a thread; the result comes
@@ -178,14 +182,21 @@ pub fn scan(
         .name("scan".into())
         .spawn(move || {
             let started = std::time::Instant::now();
-            let items = list(&folders);
+            let (items, unreachable) = list(&folders);
             log::info!(
                 "scanned {} folders: {} files in {:.0} ms",
                 folders.len(),
                 items.len(),
                 started.elapsed().as_secs_f64() * 1e3
             );
-            let _ = tx.send(Scanned { generation, items });
+            for &i in &unreachable {
+                log::info!("cannot read the library's {}", folders[i].display());
+            }
+            let _ = tx.send(Scanned {
+                generation,
+                items,
+                unreachable,
+            });
             if let Some(ctx) = ctx.get() {
                 ctx.request_repaint();
             }
@@ -198,15 +209,19 @@ pub fn scan(
 /// The pictures and videos of `folders` and their subfolders, each file
 /// once: a folder of the library inside another one (`D:\Photos` and
 /// `D:\Photos\2024`) would show its files twice. A file found again keeps
-/// the first folder it was found in.
-fn list(folders: &[PathBuf]) -> Vec<Item> {
+/// the first folder it was found in. Also the folders (their indexes) that
+/// could not be read.
+fn list(folders: &[PathBuf]) -> (Vec<Item>, Vec<usize>) {
     let mut items = Vec::new();
+    let mut unreachable = Vec::new();
     for (root, folder) in folders.iter().enumerate() {
-        walk(folder, root, &mut items);
+        if !walk(folder, root, &mut items) {
+            unreachable.push(root);
+        }
     }
     let mut seen = std::collections::HashSet::with_capacity(items.len());
     items.retain(|i| seen.insert(i.path.as_os_str().to_string_lossy().to_lowercase()));
-    items
+    (items, unreachable)
 }
 
 /// Add the pictures and videos of `dir` and its subfolders to `out`.
@@ -214,15 +229,15 @@ fn list(folders: &[PathBuf]) -> Vec<Item> {
 /// are skipped, and so are folders that are links or junctions, which
 /// could lead round in a loop. Only those: OneDrive's folders and files
 /// are reparse points too (of the cloud's tags, which are not links), and
-/// a file leads nowhere.
-fn walk(dir: &Path, root: usize, out: &mut Vec<Item>) {
+/// a file leads nowhere. Whether `dir` itself could be read.
+fn walk(dir: &Path, root: usize, out: &mut Vec<Item>) -> bool {
     use std::os::windows::fs::MetadataExt;
     const HIDDEN: u32 = 0x2;
     const SYSTEM: u32 = 0x4;
     const DIRECTORY: u32 = 0x10;
     let Ok(entries) = std::fs::read_dir(dir) else {
         log::debug!("cannot read {}", dir.display());
-        return;
+        return false;
     };
     let mut subdirs = Vec::new();
     for entry in entries.flatten() {
@@ -249,6 +264,7 @@ fn walk(dir: &Path, root: usize, out: &mut Vec<Item>) {
     for sub in subdirs {
         walk(&sub, root, out);
     }
+    true
 }
 
 /// A path as [`key_cmp`] compares it: its components in lowercase, joined
@@ -455,7 +471,13 @@ mod tests {
         }
         // The inner folder written with other case and a trailing slash.
         let inner = PathBuf::from(format!("{}\\", dir.join("2024").display()).to_uppercase());
-        let items = list(&[inner, dir.clone()]);
+        // A folder that is not there (a network drive not connected yet):
+        // told from an empty one.
+        let gone = dir.join("not there");
+        let empty = dir.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        let (items, unreachable) = list(&[inner, gone, dir.clone(), empty]);
+        assert_eq!(unreachable, [1]);
         let mut found: Vec<(String, usize)> = items
             .iter()
             .map(|i| {
@@ -466,7 +488,7 @@ mod tests {
             })
             .collect();
         found.sort();
-        assert_eq!(found, [("a.jpg".into(), 1), ("b.jpg".into(), 0)]);
+        assert_eq!(found, [("a.jpg".into(), 2), ("b.jpg".into(), 0)]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

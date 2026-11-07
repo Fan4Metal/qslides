@@ -69,6 +69,8 @@ pub struct State {
     pub has_file: bool,
     pub paused: bool,
     pub folders: Vec<PathBuf>,
+    /// For each of `folders`: the last scan could not read it.
+    pub unreachable: Vec<bool>,
     pub interval: u32,
     pub order: Order,
     pub fit: Fit,
@@ -328,9 +330,21 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
                             cmds.push(Cmd::OpenFolder(i));
                         }
                         let text = folder.display().to_string();
+                        let unreachable = s.unreachable.get(i).copied().unwrap_or(false);
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.add(egui::Label::new(&text).truncate())
-                                .on_hover_text(&text);
+                            if unreachable {
+                                let label =
+                                    egui::RichText::new(&text).color(ui.visuals().warn_fg_color);
+                                let tip = tr!(
+                                    format!("{text}\nCannot be read now (a drive not connected?)"),
+                                    format!("{text}\nСейчас недоступна (диск не подключён?)")
+                                );
+                                ui.add(egui::Label::new(label).truncate())
+                                    .on_hover_text(tip);
+                            } else {
+                                ui.add(egui::Label::new(&text).truncate())
+                                    .on_hover_text(&text);
+                            }
                         });
                     });
                 });
@@ -400,6 +414,7 @@ mod tests {
             has_file: true,
             paused: false,
             folders: vec![PathBuf::from(r"C:\Photos & Co"), PathBuf::from(r"D:\Video")],
+            unreachable: vec![false, true],
             interval: 10,
             order: Order::Random,
             fit: Fit::Fill,

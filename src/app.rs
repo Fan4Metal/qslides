@@ -48,6 +48,11 @@ const CONTROLS_FOR: Duration = Duration::from_millis(2500);
 const VIDEO_SIDES: [u32; 5] = [640, 960, 1280, 1600, 1920];
 /// How often a tray icon the shell refused is asked for again.
 const TRAY_RETRY: Duration = Duration::from_secs(3);
+/// A library folder that cannot be read is looked for again after this,
+/// then after twice as long each time, `SCAN_RETRIES` times (30 s to 8 min,
+/// a quarter of an hour in all); then only F5 or a change of the library.
+const SCAN_RETRY: Duration = Duration::from_secs(30);
+const SCAN_RETRIES: u32 = 5;
 
 /// The time a slide has been up, the pauses left out.
 struct Clock {
@@ -180,6 +185,11 @@ pub struct App {
     /// The file to go on from once the first scan is done.
     resume: Option<PathBuf>,
     scanning: bool,
+    /// The library's folders the last scan could not read.
+    unreachable: Vec<PathBuf>,
+    /// When to scan again for them, and how many times it has been done.
+    scan_retry: Option<Instant>,
+    scan_tries: u32,
     generation: u64,
     scans: Receiver<Scanned>,
     scan_tx: Sender<Scanned>,
@@ -282,6 +292,9 @@ impl App {
             playlist: Playlist::new(settings.order),
             resume: settings.last_file.clone(),
             scanning,
+            unreachable: Vec::new(),
+            scan_retry: None,
+            scan_tries: 0,
             generation: 0,
             scans: scans.1,
             scan_tx: scans.0,
@@ -339,13 +352,22 @@ impl App {
         }
     }
 
+    /// Scan the library again, as the user asked or the library changed:
+    /// folders that cannot be read are looked for again as many times.
     fn rescan(&mut self) {
+        self.scan_tries = 0;
+        self.start_scan();
+    }
+
+    fn start_scan(&mut self) {
         self.generation += 1;
         self.scanning = !self.folders.is_empty();
+        self.scan_retry = None;
         if self.folders.is_empty() {
             self.playlist.set_items(Vec::new(), None);
             self.current = None;
             self.upcoming = None;
+            self.unreachable.clear();
             return;
         }
         crate::library::scan(
@@ -409,6 +431,17 @@ impl App {
         }
         let Some(scanned) = newest else { return };
         self.scanning = false;
+        // The scan of this generation was of the folders as they are.
+        self.unreachable = (scanned.unreachable.iter())
+            .filter_map(|&i| self.folders.get(i).cloned())
+            .collect();
+        if !self.unreachable.is_empty() && self.scan_tries < SCAN_RETRIES {
+            // A network drive at sign-in, before the network: looked for
+            // again, less and less often.
+            let wait = SCAN_RETRY * 2u32.pow(self.scan_tries);
+            self.scan_tries += 1;
+            self.scan_retry = Some(Instant::now() + wait);
+        }
         let keep = self.shown_path();
         let kept = self.playlist.set_items(scanned.items, keep.as_deref());
         self.resume = None;
@@ -640,6 +673,9 @@ impl App {
             has_file: self.current.is_some(),
             paused: self.paused,
             folders: self.folders.clone(),
+            unreachable: (self.folders.iter())
+                .map(|f| (self.unreachable.iter()).any(|u| crate::library::same_path(f, u)))
+                .collect(),
             interval: self.interval,
             order: self.playlist.order(),
             fit: self.fit,
@@ -800,6 +836,19 @@ impl App {
         }
         self.make_tray();
         self.tray_retry.map(|at| at.saturating_duration_since(now))
+    }
+
+    /// Scan again for folders that could not be read, when it is time; the
+    /// time until then.
+    fn retry_scan(&mut self) -> Option<Duration> {
+        let at = self.scan_retry?;
+        let now = Instant::now();
+        if now < at {
+            return Some(at - now);
+        }
+        log::info!("looking again for the folders that could not be read");
+        self.start_scan();
+        None
     }
 
     /// What the window's subclass queued: the tray icon, Explorer.
@@ -966,6 +1015,11 @@ impl App {
                 tr!(
                     "None of the library's files could be opened",
                     "Не удалось открыть ни один файл библиотеки"
+                )
+            } else if self.playlist.is_empty() && !self.unreachable.is_empty() {
+                tr!(
+                    "The library's folders cannot be read now",
+                    "Папки библиотеки сейчас недоступны"
                 )
             } else if self.playlist.is_empty() {
                 tr!(
@@ -1259,6 +1313,9 @@ impl eframe::App for App {
         }
         self.tray_tip();
         if let Some(d) = self.retry_tray() {
+            wake = Some(wake.map_or(d, |w| w.min(d)));
+        }
+        if let Some(d) = self.retry_scan() {
             wake = Some(wake.map_or(d, |w| w.min(d)));
         }
         if let Some(d) = wake {

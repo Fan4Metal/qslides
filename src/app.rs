@@ -356,17 +356,24 @@ impl App {
         );
     }
 
-    fn add_folder(&mut self, folder: PathBuf) {
-        if self
-            .folders
-            .iter()
-            .any(|f| crate::library::same_path(f, &folder))
-        {
-            return;
+    /// Add `folders` (those not in the library yet) to the library: saved
+    /// once and scanned once, however many were dropped together.
+    fn add_folders(&mut self, folders: impl IntoIterator<Item = PathBuf>) {
+        let mut added = false;
+        for folder in folders {
+            if !self
+                .folders
+                .iter()
+                .any(|f| crate::library::same_path(f, &folder))
+            {
+                self.folders.push(folder);
+                added = true;
+            }
         }
-        self.folders.push(folder);
-        crate::library::save(&self.folders);
-        self.rescan();
+        if added {
+            crate::library::save(&self.folders);
+            self.rescan();
+        }
     }
 
     /// The largest side pictures are decoded at: the screen's, within what
@@ -868,16 +875,17 @@ impl App {
                 .map(|f| f.path().to_path_buf())
                 .collect()
         });
-        for path in dropped {
-            let folder = if path.is_dir() {
+        if dropped.is_empty() {
+            return;
+        }
+        let folders = dropped.into_iter().filter_map(|path| {
+            if path.is_dir() {
                 Some(path)
             } else {
                 path.parent().map(PathBuf::from)
-            };
-            if let Some(folder) = folder {
-                self.add_folder(folder);
             }
-        }
+        });
+        self.add_folders(folders.collect::<Vec<_>>());
     }
 
     /// The picture or the frame of `slide` in `area`, whole or filling it,
@@ -1196,7 +1204,7 @@ impl eframe::App for App {
         }
         self.dropped(&ctx);
         if let Some(folder) = self.dialog.take() {
-            self.add_folder(folder);
+            self.add_folders([folder]);
         }
 
         let done = self.loader.take();

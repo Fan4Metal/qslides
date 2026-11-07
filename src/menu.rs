@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use egui::{Key, RichText, Ui};
 
 use crate::show::{
-    ASPECTS, Fit, INTERVALS, Layer, Order, VideoLength, aspect_label, interval_label,
+    ASPECTS, Caption, Fit, INTERVALS, Layer, Order, VideoLength, aspect_label, interval_label,
     nearest_interval,
 };
 use crate::ui::OwnWindow;
@@ -39,6 +39,7 @@ pub enum Cmd {
     Order(Order),
     Fit(Fit),
     Video(VideoLength),
+    Caption(Caption),
     Aspect(Option<(u32, u32)>),
     /// The window above all others or on the desktop, switched on or off.
     Layer(Layer),
@@ -79,6 +80,7 @@ pub struct State {
     pub order: Order,
     pub fit: Fit,
     pub video: VideoLength,
+    pub caption: Caption,
     pub aspect: Option<(u32, u32)>,
     pub layer: Layer,
     pub yield_full_screen: bool,
@@ -308,6 +310,14 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
     ) {
         cmds.push(Cmd::Video(v));
     }
+    heading(ui, tr!("Caption", "Подпись"));
+    if let Some(c) = choice(
+        ui,
+        s.caption,
+        Caption::ALL.map(|c| (c, c.label().to_owned())),
+    ) {
+        cmds.push(Cmd::Caption(c));
+    }
     heading(ui, tr!("Window proportions", "Пропорции окна"));
     if let Some(a) = choice(ui, s.aspect, ASPECTS.map(|a| (a, aspect_label(a)))) {
         cmds.push(Cmd::Aspect(a));
@@ -452,6 +462,7 @@ mod tests {
             order: Order::Random,
             fit: Fit::Fill,
             video: VideoLength::Whole,
+            caption: Caption::Name,
             aspect: Some((16, 9)),
             layer: Layer::Top,
             yield_full_screen: true,

@@ -26,7 +26,7 @@ use crate::loader::{Done, Loader};
 use crate::media::{Video, VideoMsg};
 use crate::menu::Cmd;
 use crate::settings::Settings;
-use crate::show::{Fit, Layer, Playlist, VideoLength};
+use crate::show::{Caption, Fit, Layer, Playlist, VideoLength};
 use crate::ui::about::AboutWindow;
 use crate::ui::icons::Icon;
 use crate::update::Updates;
@@ -209,6 +209,9 @@ pub struct App {
     interval: u32,
     fit: Fit,
     video: VideoLength,
+    caption: Caption,
+    /// The dates files were taken, for `Caption::Date`.
+    dates: crate::dates::Dates,
     aspect: Option<(u32, u32)>,
     layer: Layer,
     /// Always on top, but under a full-screen program in front.
@@ -311,6 +314,8 @@ impl App {
             interval: settings.interval,
             fit: settings.fit,
             video: settings.video,
+            caption: settings.caption,
+            dates: crate::dates::Dates::new(ctx.clone()),
             aspect: settings.aspect,
             layer: settings.layer,
             yield_full_screen: settings.yield_full_screen,
@@ -683,6 +688,7 @@ impl App {
             order: self.playlist.order(),
             fit: self.fit,
             video: self.video,
+            caption: self.caption,
             aspect: self.aspect,
             layer: self.layer,
             yield_full_screen: self.yield_full_screen,
@@ -748,6 +754,7 @@ impl App {
                 self.upcoming = None;
             }
             Cmd::Fit(f) => self.fit = f,
+            Cmd::Caption(c) => self.caption = c,
             Cmd::Video(v) => {
                 self.video = v;
                 // A video made ready for the other way is made again.
@@ -819,7 +826,7 @@ impl App {
     }
 
     /// Give way to full-screen programs while always on top, if the user
-    /// wants it (win::set_yield).
+    /// wants it (`win::set_yield`).
     fn watch_full_screen(&self) {
         if let Some(hwnd) = self.hwnd {
             let on = self.layer == Layer::Top && self.yield_full_screen;
@@ -1072,6 +1079,11 @@ impl App {
         }
         let shown = hovering && recent && self.current.is_some();
         let opacity = ctx.animate_bool_with_time(ui.id().with("controls"), shown, 0.2);
+        // The caption, in the bottom left corner, coming in with its slide;
+        // it gives way to the buttons, which take the bottom.
+        if let Some(text) = self.caption_text() {
+            paint_caption(&painter, area, &text, t * (1.0 - opacity));
+        }
         if opacity > 0.0 && area.height() >= 70.0 && area.width() >= 120.0 {
             let radius = (area.height() * 0.09).clamp(13.0, 20.0);
             let y = area.bottom() - radius - (area.height() * 0.05).clamp(6.0, 16.0);
@@ -1185,6 +1197,20 @@ impl App {
         wake
     }
 
+    /// The caption of the slide on the screen, if there is one to show (a
+    /// date is shown once it has been read).
+    fn caption_text(&mut self) -> Option<String> {
+        let path = &self.current.as_ref()?.item.path;
+        match self.caption {
+            Caption::None => None,
+            Caption::Name => path.file_stem().map(|s| s.to_string_lossy().into_owned()),
+            Caption::Date => {
+                let path = path.clone();
+                self.dates.get(&path).map(crate::dates::label)
+            }
+        }
+    }
+
     fn tray_tip(&mut self) {
         let Some(tray) = &mut self.tray else { return };
         let name = self
@@ -1219,6 +1245,42 @@ fn placed(size: egui::Vec2, area: Rect, fit: Fit) -> (Rect, Rect) {
             (area, uv)
         }
     }
+}
+
+/// The caption `text` in the bottom left corner of `area`, white on a dark
+/// band, cut with an ellipsis where it is too long, at `opacity`; none in
+/// a window too small for it.
+fn paint_caption(painter: &egui::Painter, area: Rect, text: &str, opacity: f32) {
+    if opacity <= 0.01 || text.is_empty() || area.height() < 60.0 || area.width() < 100.0 {
+        return;
+    }
+    let size = (area.height() * 0.045).clamp(11.0, 16.0);
+    let margin = (area.height() * 0.03).clamp(6.0, 12.0);
+    let pad = vec2(size * 0.5, size * 0.2);
+    let format = egui::TextFormat {
+        font_id: egui::FontId::proportional(size),
+        color: Color32::WHITE.gamma_multiply(opacity),
+        ..Default::default()
+    };
+    let mut job = egui::text::LayoutJob::single_section(text.to_owned(), format);
+    job.wrap = egui::text::TextWrapping {
+        max_width: (area.width() - 2.0 * (margin + pad.x)).max(10.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    let galley = painter.layout_job(job);
+    let size_with_pad = galley.size() + 2.0 * pad;
+    let rect = Rect::from_min_size(
+        pos2(
+            area.left() + margin,
+            area.bottom() - margin - size_with_pad.y,
+        ),
+        size_with_pad,
+    );
+    let band = Color32::from_black_alpha((140.0 * opacity).round() as u8);
+    painter.rect_filled(rect, size * 0.35, band);
+    painter.galley(rect.min + pad, galley, Color32::WHITE);
 }
 
 /// The longer side to decode a video at for a window whose longer side is
@@ -1300,6 +1362,13 @@ impl eframe::App for App {
         if let Some(d) = self.pump() {
             wake = Some(wake.map_or(d, |w| w.min(d)));
         }
+        // The next slide's date read ahead, ready when it comes.
+        if self.caption == Caption::Date
+            && let Some(up) = &self.upcoming
+        {
+            let path = up.item.path.clone();
+            self.dates.get(&path);
+        }
 
         let painted = egui::CentralPanel::no_frame()
             .show(root_ui, |ui| self.paint(ui))
@@ -1357,6 +1426,7 @@ impl eframe::App for App {
             order: self.playlist.order(),
             fit: self.fit,
             video: self.video,
+            caption: self.caption,
             aspect: self.aspect,
             layer: self.layer,
             yield_full_screen: self.yield_full_screen,

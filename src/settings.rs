@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use crate::i18n::LangChoice;
-use crate::show::{Fit, Layer, Order, VideoLength, aspect_from_name, aspect_name};
+use crate::show::{Caption, Fit, Layer, Order, VideoLength, aspect_from_name, aspect_name};
 
 const LANGUAGE: &str = "language";
 const CHECK_UPDATES: &str = "check_updates";
@@ -21,6 +21,7 @@ const INTERVAL: &str = "interval";
 const ORDER: &str = "order";
 const FIT: &str = "fit";
 const VIDEO: &str = "video";
+const CAPTION: &str = "caption";
 const ASPECT: &str = "aspect";
 /// Read only: before `layer`, `true` was `Layer::Top`.
 const ON_TOP: &str = "on_top";
@@ -101,6 +102,7 @@ pub struct Settings {
     pub order: Order,
     pub fit: Fit,
     pub video: VideoLength,
+    pub caption: Caption,
     /// The window's proportions kept while it is sized; `None`: any.
     pub aspect: Option<(u32, u32)>,
     /// Above all windows, under them, or as any window.
@@ -124,6 +126,7 @@ impl Default for Settings {
             order: Order::Name,
             fit: Fit::Fit,
             video: VideoLength::Whole,
+            caption: Caption::None,
             aspect: None,
             layer: Layer::Normal,
             yield_full_screen: true,
@@ -170,6 +173,10 @@ impl Settings {
                 .as_deref()
                 .and_then(VideoLength::from_name)
                 .unwrap_or(d.video),
+            caption: get(CAPTION)
+                .as_deref()
+                .and_then(Caption::from_name)
+                .unwrap_or(d.caption),
             aspect: get(ASPECT)
                 .as_deref()
                 .and_then(aspect_from_name)
@@ -194,6 +201,7 @@ impl Settings {
         storage.set_string(ORDER, self.order.name().into());
         storage.set_string(FIT, self.fit.name().into());
         storage.set_string(VIDEO, self.video.name().into());
+        storage.set_string(CAPTION, self.caption.name().into());
         storage.set_string(ASPECT, aspect_name(self.aspect));
         storage.set_string(LAYER, self.layer.name().into());
         storage.remove_string(ON_TOP);
@@ -240,6 +248,7 @@ mod tests {
             order: Order::Random,
             fit: Fit::Fill,
             video: VideoLength::Interval,
+            caption: Caption::Date,
             aspect: Some((9, 16)),
             layer: Layer::Desktop,
             yield_full_screen: false,
@@ -266,6 +275,7 @@ mod tests {
             (ORDER, "size"),
             (FIT, "stretch"),
             (VIDEO, "muted"),
+            (CAPTION, "exif"),
             (ASPECT, "7:5"),
             (ON_TOP, "1"),
             (LAYER, "above"),

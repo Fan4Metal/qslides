@@ -107,6 +107,42 @@ impl VideoLength {
     }
 }
 
+/// What is written in the corner of a slide.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Caption {
+    #[default]
+    None,
+    /// The file's name without its extension.
+    Name,
+    /// The day the photo or the video was taken (`dates.rs`); nothing for a
+    /// file that does not say.
+    Date,
+}
+
+impl Caption {
+    pub const ALL: [Caption; 3] = [Caption::None, Caption::Name, Caption::Date];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Caption::None => tr!("None", "Нет"),
+            Caption::Name => tr!("File name", "Имя файла"),
+            Caption::Date => tr!("Date taken", "Дата съёмки"),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Caption::None => "none",
+            Caption::Name => "name",
+            Caption::Date => "date",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Caption> {
+        Caption::ALL.into_iter().find(|c| c.name() == name)
+    }
+}
+
 /// Where the widget's window stays among the others.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Layer {

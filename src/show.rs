@@ -87,14 +87,6 @@ pub enum VideoLength {
 impl VideoLength {
     pub const ALL: [VideoLength; 2] = [VideoLength::Whole, VideoLength::Interval];
 
-    /// As a button of the menu, under the heading "Videos".
-    pub fn short_label(self) -> &'static str {
-        match self {
-            VideoLength::Whole => tr!("To the end", "До конца"),
-            VideoLength::Interval => tr!("As long as pictures", "Как картинки"),
-        }
-    }
-
     pub fn name(self) -> &'static str {
         match self {
             VideoLength::Whole => "whole",
@@ -363,24 +355,47 @@ pub fn interval_label(secs: u32) -> String {
     }
 }
 
-/// The longest a video shown to its end may take, in seconds: the slider's
-/// steps; 0, the first, is no limit.
-pub const VIDEO_LIMITS: [u32; 16] = [
-    0, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1200, 1800, 3600,
+/// The time a video has, as the menu's one slider sets it: the way it is
+/// shown and its limit in seconds (0: none). From the shortest to the
+/// longest: as long as a picture, a limit of 10 s to 1 h, to its end.
+pub const VIDEO_TIMES: [(VideoLength, u32); 17] = [
+    (VideoLength::Interval, 0),
+    (VideoLength::Whole, 10),
+    (VideoLength::Whole, 15),
+    (VideoLength::Whole, 20),
+    (VideoLength::Whole, 30),
+    (VideoLength::Whole, 45),
+    (VideoLength::Whole, 60),
+    (VideoLength::Whole, 90),
+    (VideoLength::Whole, 120),
+    (VideoLength::Whole, 180),
+    (VideoLength::Whole, 300),
+    (VideoLength::Whole, 600),
+    (VideoLength::Whole, 900),
+    (VideoLength::Whole, 1200),
+    (VideoLength::Whole, 1800),
+    (VideoLength::Whole, 3600),
+    (VideoLength::Whole, 0),
 ];
 
-/// The step of [`VIDEO_LIMITS`] nearest to `secs`.
-pub fn nearest_video_limit(secs: u32) -> usize {
-    (0..VIDEO_LIMITS.len())
-        .min_by_key(|&i| VIDEO_LIMITS[i].abs_diff(secs))
-        .unwrap_or(0)
+/// The step of [`VIDEO_TIMES`] for `video` with `limit`: the nearest limit
+/// (a setting written by hand may be between them).
+pub fn video_time_step(video: VideoLength, limit: u32) -> usize {
+    let last = VIDEO_TIMES.len() - 1;
+    match (video, limit) {
+        (VideoLength::Interval, _) => 0,
+        (VideoLength::Whole, 0) => last,
+        (VideoLength::Whole, secs) => (1..last)
+            .min_by_key(|&i| VIDEO_TIMES[i].1.abs_diff(secs))
+            .unwrap_or(last),
+    }
 }
 
-pub fn video_limit_label(secs: u32) -> String {
-    if secs == 0 {
-        tr!("no limit", "без ограничения").to_owned()
-    } else {
-        interval_label(secs)
+pub fn video_time_label((video, limit): (VideoLength, u32)) -> String {
+    match (video, limit) {
+        (VideoLength::Interval, _) => tr!("as pictures", "как картинки").to_owned(),
+        (VideoLength::Whole, 0) => tr!("whole", "целиком").to_owned(),
+        (VideoLength::Whole, secs) => interval_label(secs),
     }
 }
 
@@ -883,6 +898,21 @@ mod tests {
         assert!(!empty.all_failed());
         assert!(empty.advance().is_none());
         assert!(empty.peek_next().is_none());
+    }
+
+    #[test]
+    fn the_video_time_slider() {
+        let last = VIDEO_TIMES.len() - 1;
+        assert_eq!(video_time_step(VideoLength::Interval, 120), 0);
+        assert_eq!(video_time_step(VideoLength::Whole, 0), last);
+        assert_eq!(VIDEO_TIMES[video_time_step(VideoLength::Whole, 120)].1, 120);
+        // Between steps: the nearest limit, never "whole".
+        assert_eq!(VIDEO_TIMES[video_time_step(VideoLength::Whole, 100)].1, 90);
+        assert_eq!(video_time_step(VideoLength::Whole, 86_400), last - 1);
+        // Every step finds itself.
+        for (i, (video, limit)) in VIDEO_TIMES.into_iter().enumerate() {
+            assert_eq!(video_time_step(video, limit), i);
+        }
     }
 
     #[test]

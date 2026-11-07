@@ -17,9 +17,8 @@ use std::path::PathBuf;
 use egui::{Key, RichText, Ui};
 
 use crate::show::{
-    ASPECTS, Caption, CaptionPart, Fit, INTERVALS, Kinds, Layer, MAX_PIECES, Order, VIDEO_LIMITS,
-    VideoLength, aspect_label, interval_label, nearest_interval, nearest_video_limit,
-    video_limit_label,
+    ASPECTS, Caption, CaptionPart, Fit, INTERVALS, Kinds, Layer, MAX_PIECES, Order, VIDEO_TIMES,
+    VideoLength, aspect_label, interval_label, nearest_interval, video_time_label, video_time_step,
 };
 use crate::ui::OwnWindow;
 use crate::ui::icons::Icon;
@@ -41,9 +40,9 @@ pub enum Cmd {
     /// The kinds of files shown, one switched on or off.
     Kinds(Kinds),
     Fit(Fit),
-    Video(VideoLength),
-    /// Seconds a video shown to its end may take; 0: no limit.
-    VideoLimit(u32),
+    /// The time a video has: the way, and the limit in seconds when shown
+    /// to its end (0: none).
+    VideoTime(VideoLength, u32),
     VideoPieces(u32),
     /// The caption with a part switched on or off.
     Caption(Caption),
@@ -330,45 +329,40 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
         cmds.push(Cmd::Fit(f));
     }
     heading(ui, tr!("Videos", "Видео"));
-    if let Some(v) = choice(
-        ui,
-        s.video,
-        VideoLength::ALL.map(|v| (v, v.short_label().to_owned())),
-    ) {
-        cmds.push(Cmd::Video(v));
-    }
-    // A long video: its time when shown to the end, and the pieces of it
-    // shown when it is longer than its time (in either way).
+    // The time a video has, one slider from "as long as pictures" through
+    // a limit to "whole", and the pieces of a video longer than that.
     egui::Grid::new("video_time")
         .num_columns(3)
         .spacing([8.0, 4.0])
         .show(ui, |ui| {
             ui.spacing_mut().slider_width = 110.0;
-            let whole = s.video == VideoLength::Whole;
-            ui.add_enabled(whole, egui::Label::new(tr!("No longer than", "Не дольше")));
-            let mut step = nearest_video_limit(s.video_limit);
-            let slider = egui::Slider::new(&mut step, 0..=VIDEO_LIMITS.len() - 1).show_value(false);
-            let response = ui.add_enabled(whole, slider).on_disabled_hover_text(tr!(
-                "With \"To the end\": as long as pictures, a video has their time",
-                "С пунктом «До конца»: как картинки видео идёт их время"
+            ui.label(tr!("Length", "Длина"));
+            let mut step = video_time_step(s.video, s.video_limit);
+            let slider = egui::Slider::new(&mut step, 0..=VIDEO_TIMES.len() - 1).show_value(false);
+            let response = ui.add(slider).on_hover_text(tr!(
+                "The longest a video is shown: as long as a picture (a shorter one played again), a time of its own, or whole however long it is",
+                "Сколько показывается видео: столько же, сколько картинка (более короткое повторяется), своё время или целиком, какой бы длины оно ни было"
             ));
-            ui.add_enabled(
-                whole,
-                egui::Label::new(video_limit_label(VIDEO_LIMITS[step])),
-            );
-            if response.changed() && VIDEO_LIMITS[step] != s.video_limit {
-                cmds.push(Cmd::VideoLimit(VIDEO_LIMITS[step]));
+            ui.label(video_time_label(VIDEO_TIMES[step]));
+            let (video, limit) = VIDEO_TIMES[step];
+            if response.changed() && step != video_time_step(s.video, s.video_limit) {
+                cmds.push(Cmd::VideoTime(video, limit));
             }
             ui.end_row();
 
-            ui.label(tr!("In pieces", "Кусками"));
+            // Whole, a video is never longer than its time.
+            let cut = !(s.video == VideoLength::Whole && s.video_limit == 0);
+            ui.add_enabled(cut, egui::Label::new(tr!("In pieces", "Кусками")));
             let mut pieces = s.video_pieces.clamp(1, MAX_PIECES);
             let slider = egui::Slider::new(&mut pieces, 1..=MAX_PIECES).show_value(false);
-            let response = ui.add(slider).on_hover_text(tr!(
+            let response = ui.add_enabled(cut, slider).on_hover_text(tr!(
                 "A video longer than its time is shown in so many pieces spread from its start to its end, with a fade between them; 1: its start only",
                 "Видео длиннее своего времени показывается столькими кусками от начала до конца, с растворением между ними; 1 — только начало"
+            )).on_disabled_hover_text(tr!(
+                "With a length other than \"whole\"",
+                "При длине не «целиком»"
             ));
-            ui.label(pieces.to_string());
+            ui.add_enabled(cut, egui::Label::new(pieces.to_string()));
             if response.changed() && pieces != s.video_pieces {
                 cmds.push(Cmd::VideoPieces(pieces));
             }

@@ -859,12 +859,12 @@ impl App {
             }
             Cmd::Fit(f) => self.fit = f,
             Cmd::Caption(c) => self.caption = c,
-            Cmd::Video(v) => {
-                self.video = v;
-                self.drop_upcoming_video();
-            }
-            Cmd::VideoLimit(secs) => {
-                self.video_limit = secs;
+            Cmd::VideoTime(video, limit) => {
+                self.video = video;
+                // As long as pictures, the limit is kept for later.
+                if video == VideoLength::Whole {
+                    self.video_limit = limit;
+                }
                 self.drop_upcoming_video();
             }
             Cmd::VideoPieces(n) => {

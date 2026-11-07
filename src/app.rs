@@ -379,16 +379,20 @@ impl App {
         let Some(scanned) = newest else { return };
         self.scanning = false;
         let keep = self.shown_path();
-        self.playlist.set_items(scanned.items, keep.as_deref());
+        let kept = self.playlist.set_items(scanned.items, keep.as_deref());
         self.resume = None;
         // The upcoming slide may no longer be the next one.
         self.upcoming = None;
         if self.playlist.is_empty() {
             self.current = None;
-        } else if self.current.is_some() {
-            // The slide on the screen is where the playlist is now.
-            if let Some(slide) = &mut self.current {
+        } else if let Some(slide) = &mut self.current {
+            if kept {
+                // The slide on the screen is where the playlist is now.
                 slide.step = self.step;
+            } else {
+                // Its file is no longer in the library: it stays until the
+                // playlist's first is ready, which is not skipped.
+                self.step += 1;
             }
         }
     }
@@ -654,11 +658,11 @@ impl App {
             Cmd::Rescan => self.rescan(),
             Cmd::Interval(n) => self.interval = n,
             Cmd::Order(o) => {
+                // The playlist keeps its current file: the slide on the
+                // screen, or the one the show waits for, which it still
+                // does (a slide's step is left as it is).
                 self.playlist.set_order(o);
                 self.upcoming = None;
-                if let Some(slide) = &mut self.current {
-                    slide.step = self.step;
-                }
             }
             Cmd::Fit(f) => self.fit = f,
             Cmd::Video(v) => {

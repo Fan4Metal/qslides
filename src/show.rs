@@ -242,10 +242,10 @@ impl Playlist {
 
     /// The files of a new scan; the show goes on from `keep` (the file
     /// shown, or the one shown when the program was closed) if it is still
-    /// there, else from the start.
-    pub fn set_items(&mut self, items: Vec<Item>, keep: Option<&Path>) {
+    /// there, else from the start. Whether `keep` was found.
+    pub fn set_items(&mut self, items: Vec<Item>, keep: Option<&Path>) -> bool {
         self.items = items;
-        self.arrange(keep);
+        self.arrange(keep)
     }
 
     pub fn order(&self) -> Order {
@@ -257,11 +257,11 @@ impl Playlist {
         if order != self.order {
             self.order = order;
             let keep = self.current().map(|i| i.path.clone());
-            self.arrange(keep.as_deref());
+            let _ = self.arrange(keep.as_deref());
         }
     }
 
-    fn arrange(&mut self, keep: Option<&Path>) {
+    fn arrange(&mut self, keep: Option<&Path>) -> bool {
         let items = &self.items;
         let mut sequence: Vec<usize> = (0..items.len()).collect();
         match self.order {
@@ -295,6 +295,7 @@ impl Playlist {
             Some(p) => self.pos = p,
             None => self.pos = 0,
         }
+        found.is_some()
     }
 
     /// Fisher–Yates.
@@ -422,8 +423,12 @@ mod tests {
     #[test]
     fn by_date_keeps_the_current_file() {
         let mut p = Playlist::new(Order::Name);
-        p.set_items(items(), Some(Path::new(r"c:\P\B10.JPG")));
+        assert!(p.set_items(items(), Some(Path::new(r"c:\P\B10.JPG"))));
         assert_eq!(name(&p), "b10.jpg");
+        // A file no longer there: from the start, and said so.
+        let mut q = Playlist::new(Order::Name);
+        assert!(!q.set_items(items(), Some(Path::new(r"C:\p\gone.jpg"))));
+        assert_eq!(name(&q), "a.jpg");
         p.set_order(Order::Date);
         assert_eq!(name(&p), "b10.jpg");
         p.advance();

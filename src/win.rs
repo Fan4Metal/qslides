@@ -553,6 +553,10 @@ pub enum Hooked {
     TrayCreated,
     /// Explorer made the window's taskbar button (again).
     TaskbarButton,
+    /// The session was locked (true) or unlocked.
+    Locked(bool),
+    /// The display went off (true) or came on again (dimmed counts as on).
+    DisplayOff(bool),
 }
 
 static HOOKED: Mutex<Vec<Hooked>> = Mutex::new(Vec::new());
@@ -588,9 +592,10 @@ fn hook(what: Hooked) {
     }
 }
 
-/// Subclass the window once: the tray icon's clicks, Explorer's restart
-/// and the taskbar button made are queued for [`take_hooked`] and `wake`
-/// is called; the proportions are kept while the window is sized.
+/// Subclass the window once: the tray icon's clicks, Explorer's restart,
+/// the taskbar button made, the session locked and the display gone off
+/// are queued for [`take_hooked`] and `wake` is called; the proportions
+/// are kept while the window is sized.
 pub fn hook_window(hwnd: isize, wake: impl Fn() + Send + Sync + 'static) {
     use std::sync::Once;
     use windows_sys::Win32::UI::Shell::SetWindowSubclass;
@@ -627,7 +632,68 @@ pub fn hook_window(hwnd: isize, wake: impl Fn() + Send + Sync + 'static) {
             }
         }
         unsafe { SetWindowSubclass(hwnd as _, Some(window_proc), 1, 0) };
+        listen_to_session(hwnd);
     });
+}
+
+/// `GUID_CONSOLE_DISPLAY_STATE`: the display on, off or dimmed.
+const DISPLAY_STATE: windows_sys::core::GUID =
+    windows_sys::core::GUID::from_u128(0x6fe69556_704a_47a0_8f24_c28d936fda47);
+const WM_WTSSESSION_CHANGE: u32 = 0x02B1;
+const WM_POWERBROADCAST: u32 = 0x0218;
+
+/// Ask for `WM_WTSSESSION_CHANGE` (the session locked) and for the
+/// display's state in `WM_POWERBROADCAST` (sent at once, then on each
+/// change), so that the show stops while nobody can see it.
+fn listen_to_session(hwnd: isize) {
+    #[link(name = "wtsapi32")]
+    unsafe extern "system" {
+        fn WTSRegisterSessionNotification(hwnd: HWND, flags: u32) -> i32;
+    }
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn RegisterPowerSettingNotification(
+            recipient: HWND,
+            setting: *const windows_sys::core::GUID,
+            flags: u32,
+        ) -> *mut core::ffi::c_void;
+    }
+    const NOTIFY_FOR_THIS_SESSION: u32 = 0;
+    const DEVICE_NOTIFY_WINDOW_HANDLE: u32 = 0;
+    // SAFETY: a window of this thread; the GUID lives for the program.
+    unsafe {
+        if WTSRegisterSessionNotification(hwnd as _, NOTIFY_FOR_THIS_SESSION) == 0 {
+            log::warn!("the session's locking will not be heard");
+        }
+        if RegisterPowerSettingNotification(hwnd as _, &DISPLAY_STATE, DEVICE_NOTIFY_WINDOW_HANDLE)
+            .is_null()
+        {
+            log::warn!("the display's state will not be heard");
+        }
+    }
+}
+
+/// The display's state from a `WM_POWERBROADCAST`: off, or not; `None`
+/// for another message of it.
+fn display_off(wparam: WPARAM, lparam: LPARAM) -> Option<bool> {
+    /// `POWERBROADCAST_SETTING`, its data a DWORD here.
+    #[repr(C)]
+    struct Setting {
+        guid: windows_sys::core::GUID,
+        length: u32,
+        data: u32,
+    }
+    const PBT_POWERSETTINGCHANGE: usize = 0x8013;
+    if wparam != PBT_POWERSETTINGCHANGE || lparam == 0 {
+        return None;
+    }
+    // SAFETY: the system's POWERBROADCAST_SETTING, read as long as it says.
+    let setting = unsafe { &*(lparam as *const Setting) };
+    let same = setting.guid.data1 == DISPLAY_STATE.data1
+        && setting.guid.data2 == DISPLAY_STATE.data2
+        && setting.guid.data3 == DISPLAY_STATE.data3
+        && setting.guid.data4 == DISPLAY_STATE.data4;
+    (same && setting.length >= 4).then_some(setting.data == 0)
 }
 
 unsafe extern "system" fn window_proc(
@@ -645,6 +711,20 @@ unsafe extern "system" fn window_proc(
     }
     if msg != 0 && msg == EXPLORER_STARTED.load(Relaxed) {
         hook(Hooked::TrayCreated);
+    }
+    if msg == WM_WTSSESSION_CHANGE {
+        const WTS_SESSION_LOCK: usize = 0x7;
+        const WTS_SESSION_UNLOCK: usize = 0x8;
+        match wparam {
+            WTS_SESSION_LOCK => hook(Hooked::Locked(true)),
+            WTS_SESSION_UNLOCK => hook(Hooked::Locked(false)),
+            _ => {}
+        }
+    }
+    if msg == WM_POWERBROADCAST
+        && let Some(off) = display_off(wparam, lparam)
+    {
+        hook(Hooked::DisplayOff(off));
     }
     // The tray icon's events (`NOTIFYICON_VERSION_4`: the event in the low
     // word of `lparam`, the pointer in `wparam`).

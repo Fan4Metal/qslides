@@ -190,7 +190,12 @@ pub struct App {
     step: u64,
     /// The picture fading out and when the fade began.
     fade: Option<(TextureHandle, Instant)>,
+    /// Paused by the user (the button, Space).
     paused: bool,
+    /// The session is locked, the display is off: the show is held, as
+    /// if paused, while nobody can see it (the user's pause apart).
+    locked: bool,
+    display_off: bool,
     interval: u32,
     fit: Fit,
     video: VideoLength,
@@ -287,6 +292,8 @@ impl App {
             step: 0,
             fade: None,
             paused: false,
+            locked: false,
+            display_off: false,
             interval: settings.interval,
             fit: settings.fit,
             video: settings.video,
@@ -516,7 +523,7 @@ impl App {
                 self.current = Some(Slide {
                     item: up.item,
                     content,
-                    clock: Clock::new(self.paused),
+                    clock: Clock::new(self.halted()),
                     step: self.step,
                 });
             }
@@ -535,7 +542,7 @@ impl App {
     /// Move on when the slide's time is up; the time until it is, if it
     /// runs on a clock.
     fn advance_if_due(&mut self) -> Option<Duration> {
-        if self.paused {
+        if self.halted() {
             return None;
         }
         let slide = self.current.as_ref()?;
@@ -579,7 +586,7 @@ impl App {
         };
         let was_ended = playing.ended;
         let wait = playing.pump(clock.elapsed());
-        if self.paused {
+        if self.paused || self.locked || self.display_off {
             return None;
         }
         // Just ended: a frame to move on in, whoever calls.
@@ -604,8 +611,20 @@ impl App {
 
     fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
+        self.hold_clock();
+    }
+
+    /// The show stands still: paused by the user, or held while nobody
+    /// can see it.
+    fn halted(&self) -> bool {
+        self.paused || self.locked || self.display_off
+    }
+
+    /// The slide's clock stopped or going, as the show is.
+    fn hold_clock(&mut self) {
+        let halted = self.halted();
         if let Some(slide) = &mut self.current {
-            slide.clock.pause(paused);
+            slide.clock.pause(halted);
         }
     }
 
@@ -795,6 +814,19 @@ impl App {
                     {
                         crate::win::set_taskbar_button(hwnd, false);
                     }
+                }
+                // Nobody sees the show: it stands still, decoding nothing
+                // (a video's thread waits on its full channel), and goes on
+                // where it was.
+                crate::win::Hooked::Locked(on) => {
+                    log::info!("session {}", if on { "locked" } else { "unlocked" });
+                    self.locked = on;
+                    self.hold_clock();
+                }
+                crate::win::Hooked::DisplayOff(off) => {
+                    log::info!("display {}", if off { "off" } else { "on" });
+                    self.display_off = off;
+                    self.hold_clock();
                 }
             }
         }

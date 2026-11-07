@@ -420,6 +420,112 @@ fn to_bottom(hwnd: HWND) {
     };
 }
 
+/// While the widget is always on top, give way to a full-screen program in
+/// front on its monitor (a game, a film, a presentation), or not. A timer
+/// of the window looks every `YIELD_CHECK_MS`, in the subclass: nothing is
+/// painted for it. Switched off while given way, the widget is put above
+/// all windows again.
+pub fn set_yield(hwnd: isize, on: bool) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{KillTimer, SetTimer};
+    YIELD.store(on, Relaxed);
+    unsafe {
+        if on {
+            SetTimer(hwnd as _, YIELD_TIMER, YIELD_CHECK_MS, None);
+        } else {
+            KillTimer(hwnd as _, YIELD_TIMER);
+        }
+    }
+    if !on && YIELDED.swap(false, Relaxed) {
+        give_way(hwnd as _, None);
+    }
+}
+
+/// The timer of [`set_yield`] and how often it looks.
+const YIELD_TIMER: usize = 0x51F1;
+const YIELD_CHECK_MS: u32 = 500;
+
+/// The topmost widget put just under `full_screen`, which takes its
+/// topmost place from it (a window put after one that is not topmost is
+/// not either), or above all windows again with `None`.
+fn give_way(hwnd: HWND, full_screen: Option<HWND>) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+    };
+    let after = full_screen.unwrap_or(HWND_TOPMOST);
+    let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+    unsafe { SetWindowPos(hwnd, after, 0, 0, 0, 0, flags) };
+}
+
+/// The window in front, if it is a full-screen one on the monitor of
+/// `own`: one of another program covering the whole monitor that is not a
+/// maximized window with a caption (with the taskbar hidden, those cover
+/// it too), the desktop left out; or any while Windows says a Direct3D
+/// program has the screen to itself or presentation mode is on.
+fn full_screen_in_front(own: HWND) -> Option<HWND> {
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GW_OWNER, GWL_STYLE, GetClassNameW, GetForegroundWindow, GetShellWindow, GetWindow,
+        GetWindowLongW, GetWindowRect, IsZoomed, WS_CAPTION,
+    };
+    #[link(name = "shell32")]
+    unsafe extern "system" {
+        fn SHQueryUserNotificationState(state: *mut i32) -> i32;
+    }
+    const QUNS_RUNNING_D3D_FULL_SCREEN: i32 = 3;
+    const QUNS_PRESENTATION_MODE: i32 = 4;
+    unsafe {
+        let front = GetForegroundWindow();
+        if front.is_null()
+            || front == own
+            || GetWindow(front, GW_OWNER) == own
+            || front == GetShellWindow()
+        {
+            return None;
+        }
+        let mut class = [0u16; 16];
+        let n = GetClassNameW(front, class.as_mut_ptr(), class.len() as i32);
+        let class = String::from_utf16_lossy(&class[..n.max(0) as usize]);
+        // The desktop behind the icons.
+        if class == "WorkerW" || class == "Progman" {
+            return None;
+        }
+        let monitor = MonitorFromWindow(front, MONITOR_DEFAULTTONEAREST);
+        if monitor != MonitorFromWindow(own, MONITOR_DEFAULTTONEAREST) {
+            return None;
+        }
+        let mut state = 0;
+        if SHQueryUserNotificationState(&mut state) >= 0
+            && matches!(state, QUNS_RUNNING_D3D_FULL_SCREEN | QUNS_PRESENTATION_MODE)
+        {
+            return Some(front);
+        }
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = size_of::<MONITORINFO>() as u32;
+        let mut r: RECT = std::mem::zeroed();
+        if GetMonitorInfoW(monitor, &mut info) == 0 || GetWindowRect(front, &mut r) == 0 {
+            return None;
+        }
+        let style = GetWindowLongW(front, GWL_STYLE) as u32;
+        let captioned = IsZoomed(front) != 0 && style & WS_CAPTION == WS_CAPTION;
+        let m = info.rcMonitor;
+        let window = [r.left, r.top, r.right, r.bottom];
+        let screen = [m.left, m.top, m.right, m.bottom];
+        is_full_screen(window, screen, captioned).then_some(front)
+    }
+}
+
+/// Whether a window of `rect` is full-screen on a monitor of `screen`: it
+/// covers all of it and is not a maximized window with a caption.
+fn is_full_screen(rect: [i32; 4], screen: [i32; 4], maximized_with_caption: bool) -> bool {
+    let covers = rect[0] <= screen[0]
+        && rect[1] <= screen[1]
+        && rect[2] >= screen[2]
+        && rect[3] >= screen[3];
+    covers && !maximized_with_caption
+}
+
 /// The window of this thread titled `title` (a viewport of the program's:
 /// eframe gives no handle for it), hidden or not.
 pub fn thread_window(title: &str) -> Option<isize> {
@@ -657,6 +763,10 @@ static ASPECT: AtomicU32 = AtomicU32::new(0);
 /// brought above them by the user for a while ([`raise`]).
 static ON_DESKTOP: AtomicBool = AtomicBool::new(false);
 static RAISED: AtomicBool = AtomicBool::new(false);
+/// Give way to full-screen programs ([`set_yield`]); `YIELDED`: given way
+/// now, no longer above all windows.
+static YIELD: AtomicBool = AtomicBool::new(false);
+static YIELDED: AtomicBool = AtomicBool::new(false);
 
 /// Keep the window at `aspect` while its edges are dragged, or not.
 pub fn set_kept_aspect(aspect: Option<(u32, u32)>) {
@@ -795,7 +905,8 @@ unsafe extern "system" fn window_proc(
 ) -> LRESULT {
     use windows_sys::Win32::UI::Shell::DefSubclassProc;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        HWND_BOTTOM, SWP_NOZORDER, WINDOWPOS, WM_ACTIVATEAPP, WM_SIZING, WM_WINDOWPOSCHANGING,
+        HWND_BOTTOM, SWP_NOZORDER, WINDOWPOS, WM_ACTIVATEAPP, WM_SIZING, WM_TIMER,
+        WM_WINDOWPOSCHANGING,
     };
     if msg != 0 && msg == TASKBAR_BUTTON.load(Relaxed) {
         hook(Hooked::TaskbarButton);
@@ -850,6 +961,24 @@ unsafe extern "system" fn window_proc(
         if pos.flags & SWP_NOZORDER == 0 {
             pos.hwndInsertAfter = HWND_BOTTOM;
         }
+    }
+    if msg == WM_TIMER && wparam == YIELD_TIMER {
+        if YIELD.load(Relaxed) {
+            let front = full_screen_in_front(hwnd);
+            if front.is_some() != YIELDED.load(Relaxed) {
+                log::info!(
+                    "{}",
+                    if front.is_some() {
+                        "giving way to a full-screen window"
+                    } else {
+                        "above all windows again"
+                    }
+                );
+                YIELDED.store(front.is_some(), Relaxed);
+                give_way(hwnd, front);
+            }
+        }
+        return 0;
     }
     // Raised, it goes down again once another program has the focus.
     if msg == WM_ACTIVATEAPP && wparam == 0 && RAISED.swap(false, Relaxed) {
@@ -1031,6 +1160,18 @@ mod tests {
             kept_aspect([500, 500, 600, 600], 4, (9, 16), (120, 90)),
             [480, 387, 600, 600]
         );
+    }
+
+    #[test]
+    fn full_screen_windows() {
+        let screen = [1920, 0, 3840, 1080];
+        // A game or a film on the whole monitor.
+        assert!(is_full_screen(screen, screen, false));
+        // A maximized window with the taskbar hidden reaches past it.
+        assert!(!is_full_screen([1912, -8, 3848, 1088], screen, true));
+        // A maximized window above the taskbar, a window of its own size.
+        assert!(!is_full_screen([1912, -8, 3848, 1048], screen, false));
+        assert!(!is_full_screen([2000, 100, 2800, 700], screen, false));
     }
 
     #[test]

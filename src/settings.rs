@@ -25,6 +25,7 @@ const ASPECT: &str = "aspect";
 /// Read only: before `layer`, `true` was `Layer::Top`.
 const ON_TOP: &str = "on_top";
 const LAYER: &str = "layer";
+const YIELD_FULL_SCREEN: &str = "yield_full_screen";
 const TRAY_ONLY: &str = "tray_only";
 const LAST_FILE: &str = "last_file";
 
@@ -104,6 +105,8 @@ pub struct Settings {
     pub aspect: Option<(u32, u32)>,
     /// Above all windows, under them, or as any window.
     pub layer: Layer,
+    /// Always on top, but not over a full-screen program in front.
+    pub yield_full_screen: bool,
     /// No taskbar button; an icon in the notification area instead.
     pub tray_only: bool,
     /// The file shown when the program was closed: the show goes on from
@@ -123,6 +126,7 @@ impl Default for Settings {
             video: VideoLength::Whole,
             aspect: None,
             layer: Layer::Normal,
+            yield_full_screen: true,
             tray_only: false,
             last_file: None,
         }
@@ -176,6 +180,7 @@ impl Settings {
                 None if flag(get(ON_TOP).as_deref(), false) => Layer::Top,
                 None => d.layer,
             },
+            yield_full_screen: flag(get(YIELD_FULL_SCREEN).as_deref(), d.yield_full_screen),
             tray_only: flag(get(TRAY_ONLY).as_deref(), d.tray_only),
             last_file: get(LAST_FILE).filter(|v| !v.is_empty()).map(PathBuf::from),
         }
@@ -192,6 +197,7 @@ impl Settings {
         storage.set_string(ASPECT, aspect_name(self.aspect));
         storage.set_string(LAYER, self.layer.name().into());
         storage.remove_string(ON_TOP);
+        storage.set_string(YIELD_FULL_SCREEN, self.yield_full_screen.to_string());
         storage.set_string(TRAY_ONLY, self.tray_only.to_string());
         let last = self
             .last_file
@@ -236,6 +242,7 @@ mod tests {
             video: VideoLength::Interval,
             aspect: Some((9, 16)),
             layer: Layer::Desktop,
+            yield_full_screen: false,
             tray_only: true,
             last_file: Some(PathBuf::from(r"C:\Фото\1.jpg")),
         };
@@ -262,6 +269,7 @@ mod tests {
             (ASPECT, "7:5"),
             (ON_TOP, "1"),
             (LAYER, "above"),
+            (YIELD_FULL_SCREEN, "no"),
             (TRAY_ONLY, ""),
             (LAST_FILE, ""),
         ] {

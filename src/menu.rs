@@ -42,6 +42,8 @@ pub enum Cmd {
     Aspect(Option<(u32, u32)>),
     /// The window above all others or on the desktop, switched on or off.
     Layer(Layer),
+    /// Give way to full-screen programs while always on top, or not.
+    YieldFullScreen,
     Autostart,
     TrayOnly,
     About,
@@ -79,6 +81,7 @@ pub struct State {
     pub video: VideoLength,
     pub aspect: Option<(u32, u32)>,
     pub layer: Layer,
+    pub yield_full_screen: bool,
     pub autostart: bool,
     pub tray_only: bool,
     /// The version of a newer release, when one was found.
@@ -383,6 +386,25 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
         tr!("Always on top", "Поверх всех окон"),
         Cmd::Layer(Layer::Top),
     );
+    // Under it, as it matters only above all windows.
+    ui.indent("yield", |ui| {
+        ui.add_enabled_ui(s.layer == Layer::Top, |ui| {
+            switch(
+                ui,
+                s.yield_full_screen,
+                tr!(
+                    "Not over full-screen programs",
+                    "Не поверх полноэкранных программ"
+                ),
+                Cmd::YieldFullScreen,
+            );
+        })
+        .response
+        .on_disabled_hover_text(tr!(
+            "With \"Always on top\"",
+            "С пунктом «Поверх всех окон»"
+        ));
+    });
     switch(
         ui,
         s.layer == Layer::Desktop,
@@ -432,6 +454,7 @@ mod tests {
             video: VideoLength::Whole,
             aspect: Some((16, 9)),
             layer: Layer::Top,
+            yield_full_screen: true,
             autostart: false,
             tray_only: false,
             update: Some("0.2.0".into()),

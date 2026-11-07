@@ -211,6 +211,8 @@ pub struct App {
     video: VideoLength,
     aspect: Option<(u32, u32)>,
     layer: Layer,
+    /// Always on top, but under a full-screen program in front.
+    yield_full_screen: bool,
     tray_only: bool,
     tray: Option<crate::tray::Tray>,
     /// When to ask again for a tray icon the shell refused.
@@ -311,6 +313,7 @@ impl App {
             video: settings.video,
             aspect: settings.aspect,
             layer: settings.layer,
+            yield_full_screen: settings.yield_full_screen,
             tray_only: settings.tray_only,
             tray: None,
             tray_retry: None,
@@ -328,6 +331,7 @@ impl App {
             autostart: false,
         };
         app.make_tray();
+        app.watch_full_screen();
         app
     }
 
@@ -681,6 +685,7 @@ impl App {
             video: self.video,
             aspect: self.aspect,
             layer: self.layer,
+            yield_full_screen: self.yield_full_screen,
             autostart: self.autostart,
             tray_only: self.tray_only,
             update: self
@@ -770,7 +775,13 @@ impl App {
                     layer
                 };
                 crate::win::set_on_desktop(self.layer == Layer::Desktop);
+                // Before winit sets the level, at the end of the frame.
+                self.watch_full_screen();
                 ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(self.layer.level()));
+            }
+            Cmd::YieldFullScreen => {
+                self.yield_full_screen = !self.yield_full_screen;
+                self.watch_full_screen();
             }
             Cmd::Autostart => {
                 let on = !crate::win::autostart();
@@ -804,6 +815,15 @@ impl App {
                     crate::win::shell_open(crate::update::release_url(tag));
                 }
             }
+        }
+    }
+
+    /// Give way to full-screen programs while always on top, if the user
+    /// wants it (win::set_yield).
+    fn watch_full_screen(&self) {
+        if let Some(hwnd) = self.hwnd {
+            let on = self.layer == Layer::Top && self.yield_full_screen;
+            crate::win::set_yield(hwnd, on);
         }
     }
 
@@ -1339,6 +1359,7 @@ impl eframe::App for App {
             video: self.video,
             aspect: self.aspect,
             layer: self.layer,
+            yield_full_screen: self.yield_full_screen,
             tray_only: self.tray_only,
             last_file: self.shown_path(),
         }

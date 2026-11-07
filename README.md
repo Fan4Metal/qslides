@@ -24,7 +24,7 @@ qslides is a small widget for the Windows desktop that works as a photo frame. S
 - **Slideshow settings**: the time each slide stays (1 second to an hour), the order (by name, by date, random), a picture fitted whole or filling the window, videos played to the end or as long as pictures (see [Slideshow](#slideshow)).
 - **A frameless window** with presets of its proportions, from 16:9 to 9:16, kept while the window is sized.
 - **Start with Windows, always on top, only in the tray**: each is one switch of the menu.
-- **Quiet**: between slides the program does no work; the next slide is decoded in advance, and slides change with a short cross-fade.
+- **Quiet**: between slides the program does no work; the next slide is decoded in advance, and slides change with a short cross-fade. While the computer is locked or the display is off, the show stands still.
 - **English or Russian interface**: it follows the language of Windows and can be changed in the About window (`F1`).
 - **Portable**: the [portable archive](#installation) keeps its settings next to the program.
 - **Privacy**: no network access beyond the optional update check (see [Update check and privacy](#update-check-and-privacy)).
@@ -63,11 +63,11 @@ Only one copy of the program runs at a time: starting it again brings the window
 
 ### Library
 
-Folders are added with **Folders → Add a folder…** (`Ctrl+O`) or by dropping them on the window; a file dropped on the window adds its folder. The library is scanned at start-up, after each change and with **Look for new files** (`F5`). Hidden and system folders, links and junctions are skipped. A folder of the library that lies inside another one adds no file twice.
+Folders are added with **Folders → Add a folder…** (`Ctrl+O`) or by dropping them on the window; a file dropped on the window adds its folder. The library is scanned at start-up, after each change and with **Look for new files** (`F5`). Hidden and system folders, links and junctions are skipped. A folder of the library that lies inside another one adds no file twice. A folder that cannot be read, such as one on a network drive not connected yet or on a removed drive, is shown in the menu in a warning colour and is looked for again several times within a quarter of an hour; **Look for new files** looks for it at once.
 
 <details><summary>Where the library is kept</summary>
 
-The folders are listed one per line in `library.txt`, next to the settings file: in `%APPDATA%\qslides\data` for the installed program, next to `qslides.exe` for the portable one. The file shown when the program is closed is remembered, and the show goes on from it at the next start.
+The folders are listed one per line in `library.txt`, next to the settings file: in `%APPDATA%\qslides\data` for the installed program, next to `qslides.exe` for the portable one. The file may be edited in Notepad: UTF-8, UTF-16 and the ANSI code page of Windows are read. The file shown when the program is closed is remembered, and the show goes on from it at the next start.
 
 </details>
 
@@ -77,7 +77,7 @@ The folders are listed one per line in `library.txt`, next to the settings file:
 
 A picture is scaled down to the size of the screen when it is decoded and turned upright by its EXIF orientation. **Fit whole** shows all of it with black bars where its proportions differ from the window's; **Fill the window** covers the window and cuts the edges of the picture.
 
-A video is shown either to its end, however long it is (**Videos: To the end**), or for the same time as a picture (**Videos: As long as pictures**): a longer one is cut off, a shorter one starts again from the beginning. The sound of a video is never played. Videos are decoded on the graphics card when Windows can, so 4K videos of a phone play smoothly; a slide shows at most 30 frames a second. A file that cannot be decoded is skipped until the next scan.
+A video is shown either to its end, however long it is (**Videos: To the end**), or for the same time as a picture (**Videos: As long as pictures**): a longer one is cut off, a shorter one starts again from the beginning. The sound of a video is never played. Videos are decoded on the graphics card when Windows can, so 4K videos of a phone play smoothly; a video is decoded no larger than the window needs, and a slide shows at most 30 frames a second. A file that cannot be decoded is skipped until the next scan.
 
 <details><summary>Which formats need extensions from the Microsoft Store</summary>
 

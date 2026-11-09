@@ -17,6 +17,8 @@
 
 qslides is a small widget for the Windows desktop that works as a photo frame. Several folders are added to its library, and the widget shows a slideshow of the pictures and videos found in them and in all their subfolders. Videos play without sound unless it is switched on with the button on the widget. The window has no frame or title bar: it is moved by dragging the picture, sized by its edges, and controlled through the menu of the right mouse button. Pictures and videos are decoded by the codecs of Windows itself, so the program consists of a single executable file.
 
+![The qslides widget showing a landscape in a black frame, its buttons shown over the picture, and its menu beside it](images/screenshot.png)
+
 ## Features
 
 - **A library of folders**: any number of folders, scanned with all their subfolders (see [Library](#library)).

@@ -88,17 +88,18 @@ impl Audio {
             .spawn(move || {
                 let _com = Com::init();
                 if let Err(e) = unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) } {
-                    log::info!("no sound: MFStartup: {e}");
+                    log::warn!("no sound: MFStartup: {e}");
                     return;
                 }
                 match open(&path, looped, volume, notify) {
                     Ok(engine) => {
-                        run(&engine, &rx, looped, &started);
+                        log::debug!("{}: sound loading", path.display());
+                        run(&engine, &rx, looped, &started, &path);
                         unsafe {
                             let _ = engine.Shutdown();
                         }
                     }
-                    Err(e) => log::info!("{}: no sound: {e}", path.display()),
+                    Err(e) => log::warn!("{}: no sound: {e}", path.display()),
                 }
                 unsafe {
                     let _ = MFShutdown();
@@ -172,6 +173,7 @@ fn run(
     rx: &std::sync::mpsc::Receiver<Msg>,
     looped: bool,
     started: &AtomicBool,
+    path: &Path,
 ) {
     let mut ready = false;
     let mut wanted = false;
@@ -186,16 +188,30 @@ fn run(
             Msg::Volume(v) => unsafe {
                 let _ = engine.SetVolume(v);
             },
-            Msg::Event(e, ..) if e == MF_MEDIA_ENGINE_EVENT_LOADEDMETADATA.0 as u32 => ready = true,
+            Msg::Event(e, ..) if e == MF_MEDIA_ENGINE_EVENT_LOADEDMETADATA.0 as u32 => {
+                log::debug!("{}: sound ready, {:.1} s", path.display(), unsafe {
+                    engine.GetDuration()
+                });
+                ready = true;
+            }
             Msg::Event(e, ..) if e == MF_MEDIA_ENGINE_EVENT_PLAYING.0 as u32 => {
+                log::debug!(
+                    "{}: sound playing, volume {:.2}, muted {}",
+                    path.display(),
+                    unsafe { engine.GetVolume() },
+                    unsafe { engine.GetMuted() }.as_bool()
+                );
                 started.store(true, Relaxed);
             }
             Msg::Event(e, code, hr) if e == MF_MEDIA_ENGINE_EVENT_ERROR.0 as u32 => {
                 // A video without sound: nothing to play.
-                log::info!("no sound: error {code}, {:#010x}", hr);
+                log::info!("{}: no sound: error {code}, {:#010x}", path.display(), hr);
                 return;
             }
-            Msg::Event(..) => continue,
+            Msg::Event(e, a, b) => {
+                log::trace!("{}: sound event {e} ({a}, {b})", path.display());
+                continue;
+            }
         }
         if !ready {
             continue;
@@ -213,12 +229,15 @@ fn run(
         }
         if wanted != playing {
             playing = wanted;
-            unsafe {
-                let _ = if wanted {
+            let done = unsafe {
+                if wanted {
                     engine.Play()
                 } else {
                     engine.Pause()
-                };
+                }
+            };
+            if let Err(e) = done {
+                log::warn!("{}: sound play/pause: {e}", path.display());
             }
         }
     }

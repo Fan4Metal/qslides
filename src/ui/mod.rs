@@ -148,6 +148,29 @@ pub fn round_mark(ui: &Ui, icon: Icon, center: Pos2, radius: f32, opacity: f32) 
     paint_round(ui.painter(), icon, center, radius, 140.0 * opacity, opacity);
 }
 
+/// A yellow warning triangle with an exclamation mark (a video whose sound
+/// Windows cannot decode), `size` points high, centred at `center`, at
+/// `opacity`; a dark edge keeps it apart from a light picture.
+pub fn warning_mark(painter: &egui::Painter, center: Pos2, size: f32, opacity: f32) {
+    let alpha = |a: f32| (a * opacity).round() as u8;
+    let (h, w) = (size, size * 1.15);
+    let points = vec![
+        center + egui::vec2(0.0, -h / 2.0),
+        center + egui::vec2(w / 2.0, h / 2.0),
+        center + egui::vec2(-w / 2.0, h / 2.0),
+    ];
+    let yellow = Color32::from_rgba_unmultiplied(0xf5, 0xc2, 0x18, alpha(255.0));
+    let edge = egui::Stroke::new((h * 0.07).max(1.0), Color32::from_black_alpha(alpha(150.0)));
+    painter.add(egui::Shape::convex_polygon(points, yellow, edge));
+    let ink = Color32::from_rgba_unmultiplied(0x22, 0x1c, 0x08, alpha(255.0));
+    let bar = egui::Rect::from_min_max(
+        center + egui::vec2(-h * 0.055, -h * 0.17),
+        center + egui::vec2(h * 0.055, h * 0.17),
+    );
+    painter.rect_filled(bar, h * 0.05, ink);
+    painter.circle_filled(center + egui::vec2(0.0, h * 0.31), h * 0.065, ink);
+}
+
 fn paint_round(
     painter: &egui::Painter,
     icon: Icon,

@@ -1394,10 +1394,32 @@ impl App {
 
         let shown = hovering && (recent || on_sound) && self.current.is_some();
         let opacity = ctx.animate_bool_with_time(ui.id().with("controls"), shown, 0.2);
+        // A video on the screen whose sound Windows cannot decode, with the
+        // sound on: a warning triangle where the sound's button is, alone
+        // while the buttons are away, on the button with them.
+        let undecodable = match &self.current {
+            Some(Slide {
+                content: Content::Video(playing),
+                ..
+            }) => (playing.audio.as_ref()).and_then(|a| a.undecodable().map(str::to_owned)),
+            _ => None,
+        };
+        let warned = undecodable.is_some() && sound_fits;
+        let alone = (1.0 - opacity) * t;
+        let warning_size = radius * 1.1;
+        if warned && alone > 0.0 && area.height() >= 70.0 && area.width() >= 120.0 {
+            crate::ui::warning_mark(&painter, speaker_at, warning_size, alone);
+        }
         // The caption, in the bottom left corner, coming in with its slide;
-        // it gives way to the buttons, which take the bottom.
+        // it gives way to the buttons, which take the bottom, and leaves
+        // room for the warning.
         if let Some(text) = self.caption_text() {
-            paint_caption(&painter, opening, &text, t * (1.0 - opacity));
+            let room = if warned {
+                area.right() - speaker_at.x + warning_size
+            } else {
+                0.0
+            };
+            paint_caption(&painter, opening, &text, t * (1.0 - opacity), room);
         }
         let controls = opacity > 0.0 && area.height() >= 70.0 && area.width() >= 120.0;
         if controls && sound_fits {
@@ -1408,9 +1430,24 @@ impl App {
                     tr!("Sound off (M)", "Выключить звук (M)"),
                 ),
             };
+            let tip = match &undecodable {
+                Some(format) => format!(
+                    "{}\n{tip}",
+                    tr!(
+                        "Windows has no decoder for this video's sound: {}",
+                        "В Windows нет декодера для звука этого видео: {}"
+                    )
+                    .replace("{}", format)
+                ),
+                None => tip.to_owned(),
+            };
             let id = ui.id().with("speaker");
             let speaker =
-                crate::ui::round_button_id(ui, id, icon, speaker_at, radius, opacity, tip);
+                crate::ui::round_button_id(ui, id, icon, speaker_at, radius, opacity, &tip);
+            if warned {
+                let badge = speaker_at + vec2(radius * 0.7, -radius * 0.7);
+                crate::ui::warning_mark(&painter, badge, radius * 0.75, opacity);
+            }
             if speaker.clicked() {
                 self.set_sound(!self.sound, self.volume);
             }
@@ -1632,8 +1669,8 @@ fn placed(size: egui::Vec2, area: Rect, fit: Fit) -> (Rect, Rect) {
 
 /// The caption `text` in the bottom left corner of `area`, white on a dark
 /// band, cut with an ellipsis where it is too long, at `opacity`; none in
-/// a window too small for it.
-fn paint_caption(painter: &egui::Painter, area: Rect, text: &str, opacity: f32) {
+/// a window too small for it; `room`: points kept free at its right.
+fn paint_caption(painter: &egui::Painter, area: Rect, text: &str, opacity: f32, room: f32) {
     if opacity <= 0.01 || text.is_empty() || area.height() < 60.0 || area.width() < 100.0 {
         return;
     }
@@ -1647,7 +1684,7 @@ fn paint_caption(painter: &egui::Painter, area: Rect, text: &str, opacity: f32) 
     };
     let mut job = egui::text::LayoutJob::single_section(text.to_owned(), format);
     job.wrap = egui::text::TextWrapping {
-        max_width: (area.width() - 2.0 * (margin + pad.x)).max(10.0),
+        max_width: (area.width() - 2.0 * (margin + pad.x) - room).max(10.0),
         max_rows: 1,
         break_anywhere: true,
         overflow_character: Some('…'),

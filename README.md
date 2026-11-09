@@ -89,7 +89,7 @@ The **Length** slider sets the time a video has: as long as a picture (**as pict
 
 <details><summary>Which formats need extensions from the Microsoft Store</summary>
 
-Windows decodes JPEG, PNG, GIF (the first frame), BMP, TIFF, ICO and JPEG XR by itself, and H.264, MPEG-4 and WMV videos. HEIC needs the HEIF Image Extensions and the HEVC Video Extensions; AVIF needs the AV1 Video Extension; WebP needs the WebP Image Extensions; VP9 videos need the VP9 Video Extensions. Files Windows cannot decode are skipped. Sound in AAC, MP3 and WMA is decoded by Windows itself; Windows 11 has no decoder for Dolby Digital (AC-3) sound, common in camcorder and TV recordings, so such videos are shown there without sound.
+Windows decodes JPEG, PNG, GIF (the first frame), BMP, TIFF, ICO and JPEG XR by itself, and H.264, MPEG-4 and WMV videos. HEIC needs the HEIF Image Extensions and the HEVC Video Extensions; AVIF needs the AV1 Video Extension; WebP needs the WebP Image Extensions; VP9 videos need the VP9 Video Extensions. Files Windows cannot decode are skipped. Sound in AAC, MP3 and WMA is decoded by Windows itself; Windows 11 has no decoder for Dolby Digital (AC-3) sound, common in camcorder and TV recordings, so such videos are shown there without sound. While the sound is on, a yellow triangle in the bottom right corner marks a video whose sound Windows cannot decode, and the sound button's tip names its format.
 
 </details>
 

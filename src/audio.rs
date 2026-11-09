@@ -22,13 +22,15 @@ use windows::Win32::Media::MediaFoundation::{
     MF_MEDIA_ENGINE_EVENT_ERROR, MF_MEDIA_ENGINE_EVENT_LOADEDMETADATA,
     MF_MEDIA_ENGINE_EVENT_PLAYING, MF_MEDIA_ENGINE_PRELOAD_AUTOMATIC, MF_MT_SUBTYPE,
     MF_SOURCE_READER_FIRST_AUDIO_STREAM, MF_VERSION, MFAudioFormat_AAC, MFAudioFormat_ALAC,
-    MFAudioFormat_AMR_NB, MFAudioFormat_AMR_WB, MFAudioFormat_DTS, MFAudioFormat_Dolby_AC3,
-    MFAudioFormat_Dolby_AC3_SPDIF, MFAudioFormat_Dolby_DDPlus, MFAudioFormat_FLAC,
-    MFAudioFormat_Float, MFAudioFormat_MP3, MFAudioFormat_MPEG, MFAudioFormat_Opus,
-    MFAudioFormat_PCM, MFAudioFormat_Vorbis, MFCreateAttributes, MFCreateSourceReaderFromURL,
-    MFMediaType_Audio, MFSTARTUP_FULL, MFShutdown, MFStartup, MFT_CATEGORY_AUDIO_DECODER,
-    MFT_ENUM_FLAG_ASYNCMFT, MFT_ENUM_FLAG_LOCALMFT, MFT_ENUM_FLAG_SORTANDFILTER,
-    MFT_ENUM_FLAG_SYNCMFT, MFT_ENUM_FLAG_UNTRUSTED_STOREMFT, MFT_REGISTER_TYPE_INFO, MFTEnumEx,
+    MFAudioFormat_AMR_NB, MFAudioFormat_AMR_WB, MFAudioFormat_DTS, MFAudioFormat_DTS_HD,
+    MFAudioFormat_DTS_RAW, MFAudioFormat_Dolby_AC3, MFAudioFormat_Dolby_AC3_HDCP,
+    MFAudioFormat_Dolby_AC3_SPDIF, MFAudioFormat_Dolby_AC4, MFAudioFormat_Dolby_DDPlus,
+    MFAudioFormat_FLAC, MFAudioFormat_Float, MFAudioFormat_MP3, MFAudioFormat_MPEG,
+    MFAudioFormat_Opus, MFAudioFormat_PCM, MFAudioFormat_Vorbis, MFCreateAttributes,
+    MFCreateSourceReaderFromURL, MFMediaType_Audio, MFSTARTUP_FULL, MFShutdown, MFStartup,
+    MFT_CATEGORY_AUDIO_DECODER, MFT_ENUM_FLAG_ASYNCMFT, MFT_ENUM_FLAG_LOCALMFT,
+    MFT_ENUM_FLAG_SORTANDFILTER, MFT_ENUM_FLAG_SYNCMFT, MFT_ENUM_FLAG_UNTRUSTED_STOREMFT,
+    MFT_REGISTER_TYPE_INFO, MFTEnumEx,
 };
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree};
 use windows::core::{BSTR, GUID, PCWSTR, implement};
@@ -103,22 +105,38 @@ impl Audio {
                     log::warn!("no sound: MFStartup: {e}");
                     return;
                 }
-                match stream(&path) {
-                    Stream::None => log::debug!("{}: no sound stream", path.display()),
-                    Stream::Undecodable(name) => {
-                        log::info!("{}: no decoder for its sound, {name}", path.display());
-                        let _ = format.set(name);
+                let shown = path.display();
+                let name = match stream(&path) {
+                    Stream::None => {
+                        log::debug!("{shown}: no sound stream");
+                        None
                     }
-                    Stream::Decodable => match open(&path, looped, volume, notify) {
+                    Stream::Undecodable(name) => {
+                        log::info!("{shown}: no decoder listed for its sound, {name}");
+                        let _ = format.set(name);
+                        None
+                    }
+                    Stream::Sound(name) => Some(Some(name)),
+                    Stream::Unknown => Some(None),
+                };
+                if let Some(name) = name {
+                    match open(&path, looped, volume, notify) {
                         Ok(engine) => {
-                            log::debug!("{}: sound loading", path.display());
-                            run(&engine, &rx, looped, &started, &path);
+                            log::debug!("{shown}: sound loading");
+                            let failed = run(&engine, &rx, looped, &started, &path);
                             unsafe {
                                 let _ = engine.Shutdown();
                             }
+                            // A sound that is there and that the engine
+                            // could not play: a decoder listed that does not
+                            // work (DTS here, AC-3 on Windows 11).
+                            if let (true, Some(name)) = (failed, name) {
+                                log::info!("{shown}: its sound, {name}, cannot be played");
+                                let _ = format.set(name);
+                            }
                         }
-                        Err(e) => log::warn!("{}: no sound: {e}", path.display()),
-                    },
+                        Err(e) => log::warn!("{shown}: no sound: {e}"),
+                    }
                 }
                 unsafe {
                     let _ = MFShutdown();
@@ -134,8 +152,9 @@ impl Audio {
         }
     }
 
-    /// The format of the video's sound when Windows has no decoder for it
-    /// (known shortly after [`Audio::start`]).
+    /// The format of the video's sound when Windows cannot decode it: no
+    /// decoder for it is listed (known shortly after [`Audio::start`]), or
+    /// the engine failed on it (once it has loaded).
     pub fn undecodable(&self) -> Option<&str> {
         self.undecodable.get().map(String::as_str)
     }
@@ -170,34 +189,49 @@ impl Audio {
 enum Stream {
     /// The video has no sound.
     None,
-    /// Windows has no decoder for its format (named): Windows 11 has none
-    /// for Dolby Digital (AC-3), which Windows 10 had.
+    /// No decoder is listed for its format (named).
     Undecodable(String),
-    /// It can be played, or the file could not be looked into here (the
-    /// engine is left to try).
-    Decodable,
+    /// Its format (named), which a decoder listed should take: the engine
+    /// tries it. The list is not the last word: DTS here, and AC-3 on
+    /// Windows 11, have a decoder listed that the engine cannot use; Vorbis
+    /// has one from the Store that a source reader does not take but the
+    /// engine does (so the sound is not decoded here to find out).
+    Sound(String),
+    /// The file could not be looked into here: the engine tries it.
+    Unknown,
 }
 
 /// The first sound stream of `path`, looked at with a source reader (the
-/// engine only fails, without saying why): its format, and a decoder for it.
+/// engine only fails, without saying why): its format and whether a decoder
+/// for it is listed.
 fn stream(path: &Path) -> Stream {
+    let shown = path.display();
     let url = crate::win::wide(path);
-    let Ok(reader) = (unsafe { MFCreateSourceReaderFromURL(PCWSTR(url.as_ptr()), None) }) else {
-        return Stream::Decodable;
+    let reader = match unsafe { MFCreateSourceReaderFromURL(PCWSTR(url.as_ptr()), None) } {
+        Ok(reader) => reader,
+        Err(e) => {
+            log::debug!("{shown}: sound not looked into: {e}");
+            return Stream::Unknown;
+        }
     };
     let first = MF_SOURCE_READER_FIRST_AUDIO_STREAM.0 as u32;
     let native = match unsafe { reader.GetNativeMediaType(first, 0) } {
         Ok(native) => native,
         Err(e) if e.code() == MF_E_INVALIDSTREAMNUMBER => return Stream::None,
-        Err(_) => return Stream::Decodable,
+        Err(e) => {
+            log::debug!("{shown}: sound stream not looked into: {e}");
+            return Stream::Unknown;
+        }
     };
     let Ok(subtype) = (unsafe { native.GetGUID(&MF_MT_SUBTYPE) }) else {
-        return Stream::Decodable;
+        return Stream::Unknown;
     };
+    let name = format_name(subtype);
     if subtype == MFAudioFormat_PCM || subtype == MFAudioFormat_Float || has_decoder(subtype) {
-        Stream::Decodable
+        log::debug!("{shown}: sound {name}");
+        Stream::Sound(name)
     } else {
-        Stream::Undecodable(format_name(subtype))
+        Stream::Undecodable(name)
     }
 }
 
@@ -242,7 +276,11 @@ fn format_name(subtype: GUID) -> String {
         (MFAudioFormat_Dolby_AC3, "Dolby Digital (AC-3)"),
         (MFAudioFormat_Dolby_AC3_SPDIF, "Dolby Digital (AC-3)"),
         (MFAudioFormat_Dolby_DDPlus, "Dolby Digital Plus (E-AC-3)"),
+        (MFAudioFormat_Dolby_AC3_HDCP, "Dolby Digital (AC-3)"),
+        (MFAudioFormat_Dolby_AC4, "Dolby AC-4"),
         (MFAudioFormat_DTS, "DTS"),
+        (MFAudioFormat_DTS_RAW, "DTS"),
+        (MFAudioFormat_DTS_HD, "DTS"),
         (MFAudioFormat_AAC, "AAC"),
         (MFAudioFormat_MP3, "MP3"),
         (MFAudioFormat_MPEG, "MPEG audio"),
@@ -298,21 +336,22 @@ fn open(
 
 /// The commands until [`Msg::Stop`]. Playing and seeking wait for the
 /// engine to know the video's length (`LOADEDMETADATA`), so that a seek
-/// is not lost and the sound does not begin before it.
+/// is not lost and the sound does not begin before it. True when the
+/// engine failed on the sound (an error event).
 fn run(
     engine: &IMFMediaEngine,
     rx: &std::sync::mpsc::Receiver<Msg>,
     looped: bool,
     started: &AtomicBool,
     path: &Path,
-) {
+) -> bool {
     let mut ready = false;
     let mut wanted = false;
     let mut playing = false;
     let mut seek = None::<f64>;
     while let Ok(msg) = rx.recv() {
         match msg {
-            Msg::Stop => return,
+            Msg::Stop => return false,
             Msg::Play => wanted = true,
             Msg::Pause => wanted = false,
             Msg::Seek(at) => seek = Some(at),
@@ -335,9 +374,10 @@ fn run(
                 started.store(true, Relaxed);
             }
             Msg::Event(e, code, hr) if e == MF_MEDIA_ENGINE_EVENT_ERROR.0 as u32 => {
-                // A video without sound: nothing to play.
+                // 0xc00d5212, MF_E_TOPO_CODEC_NOT_FOUND: no decoder that
+                // works for the sound.
                 log::info!("{}: no sound: error {code}, {:#010x}", path.display(), hr);
-                return;
+                return true;
             }
             Msg::Event(e, a, b) => {
                 log::trace!("{}: sound event {e} ({a}, {b})", path.display());
@@ -372,6 +412,7 @@ fn run(
             }
         }
     }
+    false
 }
 
 #[cfg(test)]
@@ -404,16 +445,34 @@ mod tests {
         }
     }
 
-    /// What the sound of `QSLIDES_VIDEO` is to Windows.
+    /// What the sound of `QSLIDES_VIDEO` is to Windows, and whether the
+    /// engine plays it (at no volume: nothing is heard).
     #[test]
     #[ignore]
     fn sound_stream() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let path = std::env::var("QSLIDES_VIDEO").expect("QSLIDES_VIDEO");
-        let _com = Com::init();
-        unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) }.unwrap();
-        println!("{:?}", stream(Path::new(&path)));
-        unsafe {
-            let _ = MFShutdown();
+        {
+            let _com = Com::init();
+            unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) }.unwrap();
+            println!("stream: {:?}", stream(Path::new(&path)));
+            unsafe {
+                let _ = MFShutdown();
+            }
+        }
+        let audio = Audio::start(Path::new(&path), false, 0.0);
+        audio.play();
+        let start = Instant::now();
+        while !audio.playing()
+            && audio.undecodable().is_none()
+            && start.elapsed() < Duration::from_secs(5)
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        match audio.undecodable() {
+            Some(format) => println!("cannot be decoded: {format}"),
+            None if audio.playing() => println!("plays"),
+            None => println!("silent (no sound, or no answer in 5 s)"),
         }
     }
 
@@ -422,6 +481,7 @@ mod tests {
     #[test]
     #[ignore]
     fn video_sound() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let path = std::env::var("QSLIDES_VIDEO").expect("QSLIDES_VIDEO");
         let audio = Audio::start(Path::new(&path), false, gain(40));
         audio.seek(10.0);

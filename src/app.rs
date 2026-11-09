@@ -1438,8 +1438,8 @@ impl App {
                 Some(format) => format!(
                     "{}\n{tip}",
                     tr!(
-                        "Windows has no decoder for this video's sound: {}",
-                        "В Windows нет декодера для звука этого видео: {}"
+                        "Windows cannot decode this video's sound: {}",
+                        "Windows не может декодировать звук этого видео: {}"
                     )
                     .replace("{}", format)
                 ),

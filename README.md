@@ -21,7 +21,7 @@ qslides is a small widget for the Windows desktop that works as a photo frame. S
 
 - **A library of folders**: any number of folders, scanned with all their subfolders (see [Library](#library)).
 - **Pictures and videos**: JPEG, PNG, GIF, BMP, TIFF, JPEG XR, and HEIC, AVIF and WebP when their extensions from the Microsoft Store are installed; MP4, MOV, MKV, AVI, WMV, WebM and other videos that Windows plays, without sound.
-- **Slideshow settings**: the time each slide stays (1 second to an hour), the order (by name, by date, random), pictures, videos or both, a picture fitted whole or filling the window, videos played as long as pictures, for a time of their own or whole, a longer video shown in several pieces, a caption with the folder, the file's name and the date it was taken, each switched on by itself (see [Slideshow](#slideshow)).
+- **Slideshow settings**: the time each slide stays (1 second to an hour), the order (by name, by date, random), pictures, videos or both, a picture fitted whole or filling the window, a frame round it in one of several styles and widths, videos played as long as pictures, for a time of their own or whole, a longer video shown in several pieces, a caption with the folder, the file's name and the date it was taken, each switched on by itself (see [Slideshow](#slideshow)).
 - **A frameless window** with presets of its proportions, from 16:9 to 9:16, kept while the window is sized.
 - **Start with Windows, always on top or on the desktop under all windows, only in the tray**: each is one switch of the menu; always on top, the widget gives way to full-screen programs.
 - **Quiet**: between slides the program does no work; the next slide is decoded in advance, and slides change with a short cross-fade. While the computer is locked or the display is off, the show stands still.
@@ -52,6 +52,7 @@ Everything else is in the menu of the right mouse button. A click on the tray ic
 | **Order** | **By name**, **By date**, **Random** |
 | **Show** | **Pictures**, **Videos**: each switched on or off by itself, at least one stays on |
 | **Picture** | **Fit whole** or **Fill the window** |
+| **Frame** | **None**, **Black**, **White**, **Graphite**, **Wood**, **Mat**; **Width**: 1 to 10 |
 | **Videos** | **Length**: as pictures, 10 seconds to 1 hour, or whole; **In pieces**: 1 to 10 |
 | **Caption** | **Folder**, **File name**, **Date taken**: each switched on or off by itself, those switched on written together in the bottom left corner of the slide |
 | **Window proportions** | **Any**, 16:9, 16:10, 3:2, 4:3, 5:4, 1:1, 4:5, 3:4, 2:3, 9:16 |
@@ -79,6 +80,8 @@ The folders are listed one per line in `library.txt`, next to the settings file:
 **By name** shows the folders in the order they were added to the library and, inside each, the files and subfolders by name as Explorer sorts them: `2.jpg` before `10.jpg`. **By date** goes from the oldest file to the newest by the time it was last changed. **Random** shows every file once per round in a shuffled order and shuffles anew for the next round. **Show** limits the slideshow to the pictures or to the videos of the library; the library itself stays as it is.
 
 A picture is scaled down to the size of the screen when it is decoded and turned upright by its EXIF orientation. **Fit whole** shows all of it with black bars where its proportions differ from the window's; **Fill the window** covers the window and cuts the edges of the picture.
+
+A frame is painted along the edges of the window, and the slide is shown inside it: a black, white, graphite or wooden moulding lit from the top left, or a thin dark moulding round a white mat. With the mat, the bars beside a picture fitted whole are the colour of the mat, and a white bevel runs round the picture. **Width** sets the width of the frame in steps of 1.5 % of the shorter side of the window, so the frame keeps its proportions when the window is sized.
 
 The caption is written in the bottom left corner of the slide and gives way to the buttons while they are shown. Its parts are switched on separately, and those switched on are written one after the other, separated by dots: **Folder** shows the name of the file's folder, **File name** the name of the file without its extension, **Date taken** the day a photo was taken (from its EXIF data) or a video was recorded, as Windows reads it. A file without such a date has no date in its caption; with no part switched on, there is no caption.
 

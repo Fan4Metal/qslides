@@ -10,6 +10,7 @@
 mod i18n;
 
 mod app;
+mod border;
 mod caption;
 mod dates;
 mod dialog;

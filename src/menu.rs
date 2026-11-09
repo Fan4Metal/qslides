@@ -18,6 +18,7 @@ use std::path::PathBuf;
 
 use egui::{Key, RichText, Ui};
 
+use crate::border::{self, Border};
 use crate::show::{
     ASPECTS, Caption, CaptionPart, Fit, INTERVALS, Kinds, Layer, MAX_PIECES, Order, VIDEO_TIMES,
     VideoLength, aspect_label, interval_label, nearest_interval, video_time_label, video_time_step,
@@ -42,6 +43,9 @@ pub enum Cmd {
     /// The kinds of files shown, one switched on or off.
     Kinds(Kinds),
     Fit(Fit),
+    /// The frame's style and its width.
+    Border(Border),
+    BorderWidth(u32),
     /// The time a video has: the way, and the limit in seconds when shown
     /// to its end (0: none).
     VideoTime(VideoLength, u32),
@@ -91,6 +95,8 @@ pub struct State {
     pub order: Order,
     pub kinds: Kinds,
     pub fit: Fit,
+    pub border: Border,
+    pub border_width: u32,
     pub video: VideoLength,
     pub video_limit: u32,
     pub video_pieces: u32,
@@ -329,6 +335,28 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
     if let Some(f) = choice(ui, s.fit, Fit::ALL.map(|f| (f, f.label().to_owned()))) {
         cmds.push(Cmd::Fit(f));
     }
+    heading(ui, tr!("Frame", "Рамка"));
+    if let Some(b) = choice(ui, s.border, Border::ALL.map(|b| (b, b.label().to_owned()))) {
+        cmds.push(Cmd::Border(b));
+    }
+    ui.horizontal(|ui| {
+        let framed = s.border != Border::None;
+        ui.add_enabled(framed, egui::Label::new(tr!("Width", "Ширина")));
+        ui.spacing_mut().slider_width = WIDTH - 110.0;
+        let mut width = s.border_width.clamp(1, border::MAX_WIDTH);
+        let slider = egui::Slider::new(&mut width, 1..=border::MAX_WIDTH).show_value(false);
+        let response = ui
+            .add_enabled(framed, slider)
+            .on_hover_text(tr!(
+                "A share of the window's shorter side",
+                "Доля короткой стороны окна"
+            ))
+            .on_disabled_hover_text(tr!("With a frame", "С рамкой"));
+        ui.add_enabled(framed, egui::Label::new(width.to_string()));
+        if response.changed() && width != s.border_width {
+            cmds.push(Cmd::BorderWidth(width));
+        }
+    });
     heading(ui, tr!("Videos", "Видео"));
     // The time a video has, one slider from "as long as pictures" through
     // a limit to "whole", and the pieces of a video longer than that.
@@ -515,6 +543,8 @@ mod tests {
             order: Order::Random,
             kinds: Kinds::ALL,
             fit: Fit::Fill,
+            border: Border::Mat,
+            border_width: 4,
             video: VideoLength::Whole,
             video_limit: 120,
             video_pieces: 6,

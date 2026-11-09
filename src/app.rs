@@ -23,6 +23,7 @@ use egui::{
     vec2,
 };
 
+use crate::border::Border;
 use crate::library::{Item, Kind, Scanned};
 use crate::loader::{Done, Loader};
 use crate::media::{Video, VideoMsg};
@@ -254,6 +255,9 @@ pub struct App {
     display_off: bool,
     interval: u32,
     fit: Fit,
+    /// The frame round the window's edges and its width (slider steps).
+    border: Border,
+    border_width: u32,
     video: VideoLength,
     /// Seconds a video shown to its end may take; 0: no limit.
     video_limit: u32,
@@ -368,6 +372,8 @@ impl App {
             display_off: false,
             interval: settings.interval,
             fit: settings.fit,
+            border: settings.border,
+            border_width: settings.border_width,
             video: settings.video,
             video_limit: settings.video_limit,
             video_pieces: settings.video_pieces,
@@ -786,6 +792,8 @@ impl App {
             order: self.playlist.order(),
             kinds: self.kinds,
             fit: self.fit,
+            border: self.border,
+            border_width: self.border_width,
             video: self.video,
             video_limit: self.video_limit,
             video_pieces: self.video_pieces,
@@ -860,6 +868,8 @@ impl App {
                 self.refill(keep);
             }
             Cmd::Fit(f) => self.fit = f,
+            Cmd::Border(b) => self.border = b,
+            Cmd::BorderWidth(w) => self.border_width = w,
             Cmd::Caption(c) => self.caption = c,
             Cmd::VideoTime(video, limit) => {
                 self.video = video;
@@ -1105,6 +1115,17 @@ impl App {
 
         let fading = self.fade.as_ref().map(|(t, at)| (t.clone(), at.elapsed()));
         let shown = self.current.as_ref().map(|s| s.content.texture().clone());
+        // The frame round a slide (none round the start screen), the slide
+        // in its opening; the mat fills the bars of a picture fitted whole.
+        let border = if shown.is_some() || fading.is_some() {
+            self.border
+        } else {
+            Border::None
+        };
+        let opening = border.opening(area, self.border_width);
+        if border.ground() != Color32::BLACK {
+            painter.rect_filled(opening, 0.0, border.ground());
+        }
         let t = match fading {
             Some((ref old, since)) if since < FADE => {
                 let t = since.as_secs_f32() / FADE.as_secs_f32();
@@ -1115,17 +1136,17 @@ impl App {
                     // t·new, they summed to less, the change dimmed by a
                     // quarter in its middle. Where the new one does not
                     // reach (the bars of a picture fitted whole), the old
-                    // one darkens.
+                    // one goes into the bars' colour.
                     Some(new) => {
-                        self.paint_texture(&painter, old, area, 1.0);
+                        self.paint_texture(&painter, old, opening, 1.0);
                         let [w, h] = new.size().map(|n| n.max(1) as f32);
-                        let (rect, _) = placed(vec2(w, h), area, self.fit);
-                        let dark = Color32::from_black_alpha((t * 255.0).round() as u8);
-                        for bar in outside(area, rect) {
+                        let (rect, _) = placed(vec2(w, h), opening, self.fit);
+                        let dark = border.ground().gamma_multiply(t);
+                        for bar in outside(opening, rect) {
                             painter.rect_filled(bar, 0.0, dark);
                         }
                     }
-                    None => self.paint_texture(&painter, old, area, 1.0 - t),
+                    None => self.paint_texture(&painter, old, opening, 1.0 - t),
                 }
                 soon(Duration::from_millis(16));
                 t
@@ -1136,8 +1157,16 @@ impl App {
             }
         };
         if let Some(texture) = &shown {
-            self.paint_texture(&painter, texture, area, t);
-        } else if self.fade.is_none() {
+            self.paint_texture(&painter, texture, opening, t);
+        }
+        if border != Border::None {
+            let picture = shown.as_ref().map(|texture| {
+                let [w, h] = texture.size().map(|n| n.max(1) as f32);
+                placed(vec2(w, h), opening, self.fit).0
+            });
+            border.paint(&painter, area, self.border_width, picture);
+        }
+        if shown.is_none() && self.fade.is_none() {
             let hint = if self.folders.is_empty() {
                 tr!(
                     "Right-click to add a folder with pictures, or drop a folder here",
@@ -1204,7 +1233,7 @@ impl App {
         // The caption, in the bottom left corner, coming in with its slide;
         // it gives way to the buttons, which take the bottom.
         if let Some(text) = self.caption_text() {
-            paint_caption(&painter, area, &text, t * (1.0 - opacity));
+            paint_caption(&painter, opening, &text, t * (1.0 - opacity));
         }
         let controls = opacity > 0.0 && area.height() >= 70.0 && area.width() >= 120.0;
         if controls {
@@ -1591,6 +1620,8 @@ impl eframe::App for App {
             order: self.playlist.order(),
             kinds: self.kinds,
             fit: self.fit,
+            border: self.border,
+            border_width: self.border_width,
             video: self.video,
             video_limit: self.video_limit,
             video_pieces: self.video_pieces,

@@ -11,6 +11,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use crate::border::Border;
 use crate::i18n::LangChoice;
 use crate::show::{Caption, Fit, Kinds, Layer, Order, VideoLength, aspect_from_name, aspect_name};
 
@@ -25,6 +26,8 @@ const VIDEO: &str = "video";
 const VIDEO_LIMIT: &str = "video_limit";
 const VIDEO_PIECES: &str = "video_pieces";
 const CAPTION: &str = "caption";
+const BORDER: &str = "border";
+const BORDER_WIDTH: &str = "border_width";
 const ASPECT: &str = "aspect";
 /// Read only: before `layer`, `true` was `Layer::Top`.
 const ON_TOP: &str = "on_top";
@@ -113,6 +116,10 @@ pub struct Settings {
     /// `show::MAX_PIECES`; 1: its start only).
     pub video_pieces: u32,
     pub caption: Caption,
+    /// The frame painted round the window's edges.
+    pub border: Border,
+    /// Its width, 1 to `border::MAX_WIDTH` steps of the shorter side.
+    pub border_width: u32,
     /// The window's proportions kept while it is sized; `None`: any.
     pub aspect: Option<(u32, u32)>,
     /// Above all windows, under them, or as any window.
@@ -140,6 +147,8 @@ impl Default for Settings {
             video_limit: 0,
             video_pieces: 1,
             caption: Caption::NONE,
+            border: Border::None,
+            border_width: 4,
             aspect: None,
             layer: Layer::Normal,
             yield_full_screen: true,
@@ -202,6 +211,14 @@ impl Settings {
                 .as_deref()
                 .and_then(Caption::from_name)
                 .unwrap_or(d.caption),
+            border: get(BORDER)
+                .as_deref()
+                .and_then(Border::from_name)
+                .unwrap_or(d.border),
+            border_width: get(BORDER_WIDTH)
+                .and_then(|v| v.parse().ok())
+                .filter(|n: &u32| (1..=crate::border::MAX_WIDTH).contains(n))
+                .unwrap_or(d.border_width),
             aspect: get(ASPECT)
                 .as_deref()
                 .and_then(aspect_from_name)
@@ -230,6 +247,8 @@ impl Settings {
         storage.set_string(VIDEO_LIMIT, self.video_limit.to_string());
         storage.set_string(VIDEO_PIECES, self.video_pieces.to_string());
         storage.set_string(CAPTION, self.caption.name());
+        storage.set_string(BORDER, self.border.name().into());
+        storage.set_string(BORDER_WIDTH, self.border_width.to_string());
         storage.set_string(ASPECT, aspect_name(self.aspect));
         storage.set_string(LAYER, self.layer.name().into());
         storage.remove_string(ON_TOP);
@@ -283,6 +302,8 @@ mod tests {
             caption: Caption::NONE
                 .toggled(CaptionPart::Folder)
                 .toggled(CaptionPart::Date),
+            border: Border::Wood,
+            border_width: 7,
             aspect: Some((9, 16)),
             layer: Layer::Desktop,
             yield_full_screen: false,
@@ -313,6 +334,8 @@ mod tests {
             (VIDEO_LIMIT, "-5"),
             (VIDEO_PIECES, "0"),
             (CAPTION, "exif"),
+            (BORDER, "gold"),
+            (BORDER_WIDTH, "11"),
             (ASPECT, "7:5"),
             (ON_TOP, "1"),
             (LAYER, "above"),

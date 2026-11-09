@@ -64,8 +64,22 @@ pub fn round_button(
     opacity: f32,
     tip: &str,
 ) -> Response {
-    let rect = egui::Rect::from_center_size(center, egui::vec2(radius * 2.0, radius * 2.0));
     let id = ui.id().with(("round", icon));
+    round_button_id(ui, id, icon, center, radius, opacity, tip)
+}
+
+/// A [`round_button`] whose `id` is given: one whose icon changes (the
+/// sound's) keeps its hover and clicks.
+pub fn round_button_id(
+    ui: &mut Ui,
+    id: egui::Id,
+    icon: Icon,
+    center: Pos2,
+    radius: f32,
+    opacity: f32,
+    tip: &str,
+) -> Response {
+    let rect = egui::Rect::from_center_size(center, egui::vec2(radius * 2.0, radius * 2.0));
     let response = ui.interact(rect, id, Sense::click());
     let ground = if response.hovered() { 200.0 } else { 140.0 };
     paint_round(
@@ -81,6 +95,50 @@ pub fn round_button(
     } else {
         response
     }
+}
+
+/// The volume over the picture: a vertical slider in a dark pill of
+/// `rect`, at `opacity`, `value` 0 to 100 filled from the bottom (dimmed
+/// while the sound is off, `on` false). The value pressed or dragged to,
+/// in steps of 5, when it is another than the one shown or the sound is
+/// off.
+pub fn volume_slider(
+    ui: &mut Ui,
+    id: egui::Id,
+    rect: egui::Rect,
+    value: u32,
+    on: bool,
+    opacity: f32,
+) -> Option<u32> {
+    let response = ui.interact(rect, id, Sense::click_and_drag());
+    let painter = ui.painter();
+    let half = rect.width() / 2.0;
+    painter.rect_filled(
+        rect,
+        half,
+        Color32::from_black_alpha((140.0 * opacity) as u8),
+    );
+    let (top, bottom, x) = (rect.top() + half, rect.bottom() - half, rect.center().x);
+    let level = bottom - (bottom - top) * value.min(100) as f32 / 100.0;
+    let ink = Color32::from_white_alpha((235.0 * opacity * if on { 1.0 } else { 0.45 }) as u8);
+    let track = Color32::from_white_alpha((60.0 * opacity) as u8);
+    let width = (half * 0.3).clamp(2.0, 4.0);
+    painter.line_segment(
+        [egui::pos2(x, top), egui::pos2(x, bottom)],
+        egui::Stroke::new(width, track),
+    );
+    painter.line_segment(
+        [egui::pos2(x, level), egui::pos2(x, bottom)],
+        egui::Stroke::new(width, ink),
+    );
+    painter.circle_filled(egui::pos2(x, level), (half * 0.45).max(4.0), ink);
+    if !response.is_pointer_button_down_on() {
+        return None;
+    }
+    let p = response.interact_pointer_pos()?;
+    let share = ((bottom - p.y) / (bottom - top).max(1.0)).clamp(0.0, 1.0);
+    let chosen = (share * 20.0).round() as u32 * 5;
+    (chosen != value || !on).then_some(chosen)
 }
 
 /// A mark painted as a [`round_button`] that is not one (the pause in the

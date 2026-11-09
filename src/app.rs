@@ -57,6 +57,10 @@ const TRAY_RETRY: Duration = Duration::from_secs(3);
 /// a quarter of an hour in all); then only F5 or a change of the library.
 const SCAN_RETRY: Duration = Duration::from_secs(30);
 const SCAN_RETRIES: u32 = 5;
+/// The softest the sound is set to (the slider's lowest step but none),
+/// and the step of the keys and the wheel.
+const MIN_VOLUME: u32 = 5;
+const VOLUME_STEP: u32 = 5;
 
 /// The time a slide has been up, the pauses left out.
 struct Clock {
@@ -290,8 +294,14 @@ pub struct App {
     video_limit: u32,
     /// The pieces a video longer than its time is shown in.
     video_pieces: u32,
-    /// The volume of videos' sound, 0 to 100; 0: none.
+    /// Videos are heard, at `volume` (`MIN_VOLUME` to 100, kept while the
+    /// sound is off).
+    sound: bool,
     volume: u32,
+    /// The volume slider over the sound's button is out.
+    volume_open: bool,
+    /// The show has videos: the sound's button is shown.
+    has_videos: bool,
     caption: Caption,
     /// The dates files were taken, for `CaptionPart::Date`.
     dates: crate::dates::Dates,
@@ -406,7 +416,10 @@ impl App {
             video: settings.video,
             video_limit: settings.video_limit,
             video_pieces: settings.video_pieces,
+            sound: settings.sound,
             volume: settings.volume,
+            volume_open: false,
+            has_videos: false,
             caption: settings.caption,
             dates: crate::dates::Dates::new(ctx.clone()),
             aspect: settings.aspect,
@@ -553,10 +566,11 @@ impl App {
     /// The show made again from the library, of the kinds shown, going on
     /// from `keep` if it is still in it.
     fn refill(&mut self, keep: Option<PathBuf>) {
-        let items = (self.library.iter())
+        let items: Vec<Item> = (self.library.iter())
             .filter(|i| self.kinds.has(i.kind))
             .cloned()
             .collect();
+        self.has_videos = items.iter().any(|i| i.kind == Kind::Video);
         let kept = self.playlist.set_items(items, keep.as_deref());
         // The upcoming slide may no longer be the next one.
         self.upcoming = None;
@@ -609,8 +623,9 @@ impl App {
                     time: (self.video_time()).map(|t| (t.as_nanos() / 100) as i64),
                     pieces: self.video_pieces,
                 };
-                let audio = (self.volume > 0)
-                    .then(|| Audio::start(&item.path, plan.looped, gain(self.volume)));
+                let volume = self.loudness();
+                let audio =
+                    (volume > 0).then(|| Audio::start(&item.path, plan.looped, gain(volume)));
                 Prep::Video(Video::start(&item.path, side, plan, ctx.clone()), audio)
             }
         };
@@ -834,14 +849,25 @@ impl App {
         }
     }
 
-    /// The volume of videos set: the sound of the video on the screen
+    /// The volume videos' sound plays at, 0 to 100; 0: none.
+    fn loudness(&self) -> u32 {
+        if self.sound { self.volume } else { 0 }
+    }
+
+    /// The sound switched on or off and its volume set (`MIN_VOLUME` at
+    /// least, kept while it is off): the sound of the video on the screen
     /// louder or softer, started where its picture is or stopped.
-    fn set_volume(&mut self, volume: u32) {
-        if (self.volume == 0) != (volume == 0) {
+    fn set_sound(&mut self, sound: bool, volume: u32) {
+        let before = self.loudness();
+        (self.sound, self.volume) = (sound, volume.clamp(MIN_VOLUME, 100));
+        let volume = self.loudness();
+        if volume == before {
+            return;
+        }
+        if (before == 0) != (volume == 0) {
             // Made ready with its sound or without.
             self.drop_upcoming_video();
         }
-        self.volume = volume;
         let looped = self.video == VideoLength::Interval;
         let Some(Slide {
             item,
@@ -864,6 +890,22 @@ impl App {
         }
     }
 
+    /// A step louder or softer (the keys, the wheel over the volume): louder
+    /// switches the sound on, softer than the softest switches it off.
+    fn nudge_volume(&mut self, louder: bool) {
+        if !self.sound {
+            if louder {
+                self.set_sound(true, self.volume);
+            }
+        } else if louder {
+            self.set_sound(true, self.volume + VOLUME_STEP);
+        } else if self.volume <= MIN_VOLUME {
+            self.set_sound(false, self.volume);
+        } else {
+            self.set_sound(true, self.volume - VOLUME_STEP);
+        }
+    }
+
     fn menu_state(&self) -> crate::menu::State {
         crate::menu::State {
             has_file: self.current.is_some(),
@@ -881,7 +923,6 @@ impl App {
             video: self.video,
             video_limit: self.video_limit,
             video_pieces: self.video_pieces,
-            volume: self.volume,
             caption: self.caption,
             aspect: self.aspect,
             layer: self.layer,
@@ -964,7 +1005,6 @@ impl App {
                 }
                 self.drop_upcoming_video();
             }
-            Cmd::Volume(v) => self.set_volume(v),
             Cmd::VideoPieces(n) => {
                 self.video_pieces = n;
                 self.drop_upcoming_video();
@@ -1132,6 +1172,15 @@ impl App {
         }
         if pressed(Key::Space) {
             self.set_paused(!self.paused);
+        }
+        if pressed(Key::M) {
+            self.set_sound(!self.sound, self.volume);
+        }
+        if pressed(Key::ArrowUp) {
+            self.nudge_volume(true);
+        }
+        if pressed(Key::ArrowDown) {
+            self.nudge_volume(false);
         }
         if pressed(Key::F1) {
             self.about.toggle();
@@ -1314,7 +1363,36 @@ impl App {
         if let Some(at) = self.pointer_moved.filter(|_| recent) {
             soon(CONTROLS_FOR.saturating_sub(at.elapsed()) + Duration::from_millis(20));
         }
-        let shown = hovering && recent && self.current.is_some();
+        let radius = (area.height() * 0.09).clamp(13.0, 20.0);
+        let edge = (area.height() * 0.05).clamp(6.0, 16.0);
+        let y = area.bottom() - radius - edge;
+        let gap = radius * 2.6;
+        let c = area.center().x;
+        // The sound in the bottom right corner, when the show has videos and
+        // the corner has room beside the middle buttons: its button, and
+        // over it the volume, out while the pointer is on either.
+        let speaker_at = pos2(area.right() - radius - edge, y);
+        let sound_fits = self.has_videos && speaker_at.x - radius > c + gap + radius + 6.0;
+        let slider = Rect::from_min_max(
+            pos2(
+                speaker_at.x - radius * 0.7,
+                (y - radius * 7.0).max(area.top() + 8.0),
+            ),
+            pos2(speaker_at.x + radius * 0.7, y - radius - 6.0),
+        );
+        let slider_id = ui.id().with("volume");
+        let pointer = ctx.input(|i| i.pointer.hover_pos());
+        let on_speaker = pointer.is_some_and(|p| p.distance(speaker_at) <= radius + 2.0);
+        // The slider, the gap under it and the button.
+        let zone = slider.union(Rect::from_center_size(speaker_at, vec2(2.0, 2.0) * radius));
+        let in_zone = pointer.is_some_and(|p| zone.expand(4.0).contains(p));
+        self.volume_open = sound_fits
+            && slider.height() >= 3.0 * radius
+            && self.current.is_some()
+            && (on_speaker || ctx.is_being_dragged(slider_id) || (self.volume_open && in_zone));
+        let on_sound = sound_fits && (on_speaker || self.volume_open);
+
+        let shown = hovering && (recent || on_sound) && self.current.is_some();
         let opacity = ctx.animate_bool_with_time(ui.id().with("controls"), shown, 0.2);
         // The caption, in the bottom left corner, coming in with its slide;
         // it gives way to the buttons, which take the bottom.
@@ -1322,11 +1400,34 @@ impl App {
             paint_caption(&painter, opening, &text, t * (1.0 - opacity));
         }
         let controls = opacity > 0.0 && area.height() >= 70.0 && area.width() >= 120.0;
+        if controls && sound_fits {
+            let (icon, tip) = match (self.sound, self.volume) {
+                (false, _) => (Icon::Mute, tr!("Sound on (M)", "Включить звук (M)")),
+                (true, v) => (
+                    Icon::Volume(if v < 50 { 1 } else { 2 }),
+                    tr!("Sound off (M)", "Выключить звук (M)"),
+                ),
+            };
+            let id = ui.id().with("speaker");
+            let speaker =
+                crate::ui::round_button_id(ui, id, icon, speaker_at, radius, opacity, tip);
+            if speaker.clicked() {
+                self.set_sound(!self.sound, self.volume);
+            }
+            let out =
+                ctx.animate_bool_with_time(ui.id().with("volume_out"), self.volume_open, 0.15);
+            if out > 0.0 {
+                let (volume, sound) = (self.volume, self.sound);
+                let set =
+                    crate::ui::volume_slider(ui, slider_id, slider, volume, sound, out * opacity);
+                match set {
+                    Some(0) => self.set_sound(false, volume),
+                    Some(v) => self.set_sound(true, v),
+                    None => {}
+                }
+            }
+        }
         if controls {
-            let radius = (area.height() * 0.09).clamp(13.0, 20.0);
-            let y = area.bottom() - radius - (area.height() * 0.05).clamp(6.0, 16.0);
-            let gap = radius * 2.6;
-            let c = area.center().x;
             let back = crate::ui::round_button(
                 ui,
                 Icon::SkipBack,
@@ -1436,6 +1537,7 @@ impl App {
                 i.pointer.button_down(egui::PointerButton::Secondary),
             )
         });
+        let wheel_volume = self.volume_open || (sound_fits && on_speaker);
         if right_pressed {
             self.menu_press = drag.contains_pointer();
         }
@@ -1443,7 +1545,8 @@ impl App {
             self.menu_press = false;
             self.open_menu(crate::win::cursor_pos());
         }
-        // The wheel goes through the files, a notch a file.
+        // The wheel goes through the files, a notch a file; over the sound,
+        // it sets the volume, a notch a step.
         if hovering {
             self.wheel += ctx.input(|i| {
                 i.raw
@@ -1461,10 +1564,10 @@ impl App {
                     .sum::<f32>()
             });
             if self.wheel.abs() >= 1.0 {
-                if self.wheel > 0.0 {
-                    self.previous();
-                } else {
-                    self.next();
+                match (wheel_volume, self.wheel > 0.0) {
+                    (true, up) => self.nudge_volume(up),
+                    (false, true) => self.previous(),
+                    (false, false) => self.next(),
                 }
                 self.wheel = 0.0;
             }
@@ -1711,6 +1814,7 @@ impl eframe::App for App {
             video: self.video,
             video_limit: self.video_limit,
             video_pieces: self.video_pieces,
+            sound: self.sound,
             volume: self.volume,
             caption: self.caption,
             aspect: self.aspect,

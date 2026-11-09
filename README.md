@@ -15,7 +15,7 @@
 
 <p align="center"><b>English</b> | <a href="README.ru.md">Русский</a></p>
 
-qslides is a small widget for the Windows desktop that works as a photo frame. Several folders are added to its library, and the widget shows a slideshow of the pictures and videos found in them and in all their subfolders. Videos play without sound unless their sound is turned up in the menu. The window has no frame or title bar: it is moved by dragging the picture, sized by its edges, and controlled through the menu of the right mouse button. Pictures and videos are decoded by the codecs of Windows itself, so the program consists of a single executable file.
+qslides is a small widget for the Windows desktop that works as a photo frame. Several folders are added to its library, and the widget shows a slideshow of the pictures and videos found in them and in all their subfolders. Videos play without sound unless it is switched on with the button on the widget. The window has no frame or title bar: it is moved by dragging the picture, sized by its edges, and controlled through the menu of the right mouse button. Pictures and videos are decoded by the codecs of Windows itself, so the program consists of a single executable file.
 
 ## Features
 
@@ -41,7 +41,7 @@ The executables are not code-signed, so Windows SmartScreen may warn about an un
 
 ## Usage
 
-The window shows the current slide on a black background. Dragging the picture moves the window, dragging its edges and corners sizes it. When the pointer moves over the window, the **Previous**, **Pause** and **Next** buttons appear at its bottom, **Open the file** (in the program Windows associates with it) and **Show in its folder** (in Explorer) at its top left corner, and a cross that closes the program at its top right corner; they fade out again after a few seconds. A double click opens the file shown in the program Windows associates with it.
+The window shows the current slide on a black background. Dragging the picture moves the window, dragging its edges and corners sizes it. When the pointer moves over the window, the **Previous**, **Pause** and **Next** buttons appear at its bottom, **Open the file** (in the program Windows associates with it) and **Show in its folder** (in Explorer) at its top left corner, a cross that closes the program at its top right corner, and, when the slideshow has videos, the sound button at its bottom right corner; they fade out again after a few seconds. A double click opens the file shown in the program Windows associates with it.
 
 Everything else is in the menu of the right mouse button. A click on the tray icon brings the widget in front of other windows; the right button on the tray icon opens a short system menu: **qslides** does the same, **Exit** closes the program. The widget's menu is a small panel in a window of its own, so it extends beyond the edges of a small widget; near the edges of the screen it opens to the left or upward. It closes on a click elsewhere or on `Esc`; the settings in it take effect at once and leave it open.
 
@@ -53,7 +53,7 @@ Everything else is in the menu of the right mouse button. A click on the tray ic
 | **Show** | **Pictures**, **Videos**: each switched on or off by itself, at least one stays on |
 | **Picture** | **Fit whole** or **Fill the window** |
 | **Frame** | **None**, **Black**, **White**, **Graphite**, **Wood**, **Mat**; **Width**: 1 to 10 |
-| **Videos** | **Length**: as pictures, 10 seconds to 1 hour, or whole; **In pieces**: 1 to 10; **Sound**: off, or a volume from 5 to 100 % |
+| **Videos** | **Length**: as pictures, 10 seconds to 1 hour, or whole; **In pieces**: 1 to 10 |
 | **Caption** | **Folder**, **File name**, **Date taken**: each switched on or off by itself, those switched on written together in the bottom left corner of the slide |
 | **Window proportions** | **Any**, 16:9, 16:10, 3:2, 4:3, 5:4, 1:1, 4:5, 3:4, 2:3, 9:16 |
 | **Folders** | The library: each folder with buttons to open it in Explorer and to remove it, **Add a folder…**, **Look for new files** |
@@ -85,7 +85,7 @@ A frame is painted along the edges of the window, and the slide is shown inside 
 
 The caption is written in the bottom left corner of the slide and gives way to the buttons while they are shown. Its parts are switched on separately, and those switched on are written one after the other, separated by dots: **Folder** shows the name of the file's folder, **File name** the name of the file without its extension, **Date taken** the day a photo was taken (from its EXIF data) or a video was recorded, as Windows reads it. A file without such a date has no date in its caption; with no part switched on, there is no caption.
 
-The **Length** slider sets the time a video has: as long as a picture (**as pictures**; a shorter video starts again from the beginning), a time of its own from 10 seconds to 1 hour (a shorter video is shown once), or **whole**, however long it is. A video longer than its time is shown in the number of pieces set by **In pieces**: the time is divided equally between them, the first piece is taken from the beginning of the video, the last ends at its end, the others lie evenly between them, and each piece fades into the next as slides do. With one piece, only the beginning of the video is shown. A piece is never shorter than 2 seconds, so a short time may give fewer pieces. With **Sound** off (at the left), the default, the sound of a video is never played; turned up, it plays on the default output device of Windows, starts with the video's first frame, pauses with the slideshow, follows the video to each of its pieces and starts again with a looped video. Turned up while a video is shown, its sound starts where the picture is. Videos are decoded on the graphics card when Windows can, so 4K videos of a phone play smoothly; a video is decoded no larger than the window needs, and a slide shows at most 30 frames a second. A file that cannot be decoded is skipped until the next scan.
+The **Length** slider sets the time a video has: as long as a picture (**as pictures**; a shorter video starts again from the beginning), a time of its own from 10 seconds to 1 hour (a shorter video is shown once), or **whole**, however long it is. A video longer than its time is shown in the number of pieces set by **In pieces**: the time is divided equally between them, the first piece is taken from the beginning of the video, the last ends at its end, the others lie evenly between them, and each piece fades into the next as slides do. With one piece, only the beginning of the video is shown. A piece is never shorter than 2 seconds, so a short time may give fewer pieces. The sound of a video is off by default. The button with a loudspeaker in the bottom right corner of the widget (or `M`) switches it on and off; while the pointer rests on the button, a volume slider comes out above it, from 5 to 100 % in steps of 5, and the wheel over them or `Up` and `Down` change the volume (moving it up switches the sound on, below the lowest step switches it off). Switched on, the sound plays on the default output device of Windows, starts with the video's first frame, pauses with the slideshow, follows the video to each of its pieces and starts again with a looped video. Switched on while a video is shown, its sound starts where the picture is. Videos are decoded on the graphics card when Windows can, so 4K videos of a phone play smoothly; a video is decoded no larger than the window needs, and a slide shows at most 30 frames a second. A file that cannot be decoded is skipped until the next scan.
 
 <details><summary>Which formats need extensions from the Microsoft Store</summary>
 
@@ -100,6 +100,8 @@ Windows decodes JPEG, PNG, GIF (the first frame), BMP, TIFF, ICO and JPEG XR by 
 | `Right`, `Page Down`, wheel down | Next slide |
 | `Left`, `Page Up`, wheel up | Previous slide |
 | `Space` | Pause or go on |
+| `M` | Sound on or off |
+| `Up`, `Down`, wheel over the sound button | Volume |
 | `Enter`, double click | Open the file shown |
 | `Ctrl+O` | Add a folder |
 | `F5` | Look for new files |

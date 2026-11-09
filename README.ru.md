@@ -89,7 +89,7 @@ qslides — небольшой виджет для рабочего стола W
 
 <details><summary>Каким форматам нужны расширения из Microsoft Store</summary>
 
-Windows сама декодирует JPEG, PNG, GIF (первый кадр), BMP, TIFF, ICO и JPEG XR, а также видео H.264, MPEG-4 и WMV. Для HEIC нужны расширения HEIF Image Extensions и HEVC Video Extensions, для AVIF — AV1 Video Extension, для WebP — WebP Image Extensions, для видео VP9 — VP9 Video Extensions. Файлы, которые Windows не может декодировать, пропускаются.
+Windows сама декодирует JPEG, PNG, GIF (первый кадр), BMP, TIFF, ICO и JPEG XR, а также видео H.264, MPEG-4 и WMV. Для HEIC нужны расширения HEIF Image Extensions и HEVC Video Extensions, для AVIF — AV1 Video Extension, для WebP — WebP Image Extensions, для видео VP9 — VP9 Video Extensions. Файлы, которые Windows не может декодировать, пропускаются. Звук AAC, MP3 и WMA Windows декодирует сама; декодера звука Dolby Digital (AC-3), частого в записях видеокамер и телевизионных записях, в Windows 11 нет, поэтому такие видео показываются там без звука.
 
 </details>
 

@@ -8,9 +8,11 @@
 //! focus, on Esc and after a command that leads elsewhere.
 //!
 //! It is a panel rather than a list of submenus: the controls of the show
-//! at the top, the settings with a slider for the time a slide stays, the
-//! library's folders under a header that opens, the switches and About.
-//! Exit is not here: the widget has a cross of its own.
+//! at the top with About and a cross that closes the menu at their right,
+//! the settings with a slider for the time a slide stays, the library's
+//! folders under a header that opens, the switches. Exit is not here: the
+//! widget has a cross of its own, and the file's buttons (open it, show it
+//! in its folder) are on the widget too.
 
 use std::path::PathBuf;
 
@@ -56,6 +58,8 @@ pub enum Cmd {
     About,
     /// Open the page of the newer release.
     Update,
+    /// Close the menu (its cross).
+    Close,
 }
 
 impl Cmd {
@@ -71,6 +75,7 @@ impl Cmd {
                 | Cmd::OpenFolder(_)
                 | Cmd::About
                 | Cmd::Update
+                | Cmd::Close
         )
     }
 }
@@ -261,26 +266,22 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
                     "Показанный файл и число файлов в показе"
                 ));
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if crate::ui::icon_button(
-                    ui,
-                    Icon::Folder,
-                    tr!("Show in its folder", "Показать в папке"),
-                )
+        });
+        // The file's own buttons are on the widget, top left; here, About
+        // and a cross that closes the menu, as a window's title row has.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if crate::ui::icon_button(ui, Icon::Close, tr!("Close (Esc)", "Закрыть (Esc)"))
                 .clicked()
-                {
-                    cmds.push(Cmd::ShowInFolder);
-                }
-                if crate::ui::icon_button(
-                    ui,
-                    Icon::Open,
-                    tr!("Open the file (Enter)", "Открыть файл (Enter)"),
-                )
-                .clicked()
-                {
-                    cmds.push(Cmd::OpenFile);
-                }
-            });
+            {
+                cmds.push(Cmd::Close);
+            }
+            let about = tr!(
+                format!("About {} (F1)", crate::APP_NAME),
+                format!("О программе {} (F1)", crate::APP_NAME)
+            );
+            if crate::ui::icon_button(ui, Icon::Info, &about).clicked() {
+                cmds.push(Cmd::About);
+            }
         });
     });
     if let Some(v) = &s.update
@@ -498,16 +499,6 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
         tr!("Only in the tray", "Только в трее"),
         Cmd::TrayOnly,
     );
-    ui.separator();
-
-    // No Exit here: the widget has its own cross, shown with the pointer.
-    let about = tr!(
-        format!("About {}", crate::APP_NAME),
-        format!("О программе {}", crate::APP_NAME)
-    );
-    if ui.button(about).on_hover_text("F1").clicked() {
-        cmds.push(Cmd::About);
-    }
 }
 
 #[cfg(test)]
@@ -556,6 +547,7 @@ mod tests {
     fn what_closes_the_menu() {
         assert!(Cmd::About.closes_menu());
         assert!(Cmd::OpenFolder(0).closes_menu());
+        assert!(Cmd::Close.closes_menu());
         assert!(!Cmd::Interval(5).closes_menu());
         assert!(!Cmd::Next.closes_menu());
         assert!(!Cmd::RemoveFolder(0).closes_menu());

@@ -1,7 +1,9 @@
 //! The widget: the eframe `App` showing the slideshow in a frameless
 //! window. The picture fills the window (black around it); moving the
-//! pointer over it brings up the Previous, Pause and Next buttons; the
-//! rest is in the menu of the right button (`menu.rs`).
+//! pointer over it brings up the Previous, Pause and Next buttons, the
+//! file's (open it, show it in its folder) in the top left corner and the
+//! cross in the top right one; the rest is in the menu of the right button
+//! (`menu.rs`).
 //!
 //! The show keeps one slide on the screen (`current`) and gets the next
 //! one ready while it is up (`upcoming`): a picture decoded by the loader
@@ -922,6 +924,8 @@ impl App {
                 }
             }
             Cmd::About => self.about.toggle(),
+            // The menu has closed itself.
+            Cmd::Close => {}
             Cmd::Update => {
                 if let Some(tag) = self.updates.newer() {
                     crate::win::shell_open(crate::update::release_url(tag));
@@ -1202,7 +1206,8 @@ impl App {
         if let Some(text) = self.caption_text() {
             paint_caption(&painter, area, &text, t * (1.0 - opacity));
         }
-        if opacity > 0.0 && area.height() >= 70.0 && area.width() >= 120.0 {
+        let controls = opacity > 0.0 && area.height() >= 70.0 && area.width() >= 120.0;
+        if controls {
             let radius = (area.height() * 0.09).clamp(13.0, 20.0);
             let y = area.bottom() - radius - (area.height() * 0.05).clamp(6.0, 16.0);
             let gap = radius * 2.6;
@@ -1238,11 +1243,6 @@ impl App {
             if forward.clicked() {
                 self.next();
             }
-        } else if self.paused && self.current.is_some() {
-            // Paused, the buttons away: a small mark in the corner says so.
-            let r = 9.0;
-            let center = Pos2::new(area.left() + r + 8.0, area.top() + r + 8.0);
-            crate::ui::round_mark(ui, Icon::Pause, center, r, 0.8);
         }
 
         // The cross that ends the program, in the top right corner, with
@@ -1252,9 +1252,51 @@ impl App {
         let r = (area.height() * 0.06).clamp(10.0, 14.0);
         let center = pos2(area.right() - r - 10.0, area.top() + r + 10.0);
         // It stays while the pointer rests on it, moving or not.
-        let on_cross = ctx
-            .input(|i| i.pointer.hover_pos())
-            .is_some_and(|p| p.distance(center) <= r + 4.0);
+        let pointer = ctx.input(|i| i.pointer.hover_pos());
+        let near = |c: Pos2| pointer.is_some_and(|p| p.distance(c) <= r + 4.0);
+        let on_cross = near(center);
+
+        // The file's buttons in the top left corner, as the cross is in the
+        // right one: open the file, show it in its folder.
+        let open_at = pos2(area.left() + r + 10.0, area.top() + r + 10.0);
+        let folder_at = open_at + vec2(2.0 * r + 6.0, 0.0);
+        let on_file = near(open_at) || near(folder_at);
+        let file_opacity = ctx.animate_bool_with_time(
+            ui.id().with("file"),
+            hovering && self.current.is_some() && (recent || on_file),
+            0.2,
+        );
+        let file_buttons = file_opacity > 0.0 && area.height() >= 40.0 && area.width() >= 120.0;
+        if file_buttons {
+            let open = crate::ui::round_button(
+                ui,
+                Icon::Open,
+                open_at,
+                r,
+                file_opacity,
+                tr!("Open the file (Enter)", "Открыть файл (Enter)"),
+            );
+            let folder = crate::ui::round_button(
+                ui,
+                Icon::Folder,
+                folder_at,
+                r,
+                file_opacity,
+                tr!("Show in its folder", "Показать в папке"),
+            );
+            if open.clicked() {
+                self.run(Cmd::OpenFile, &ctx);
+            }
+            if folder.clicked() {
+                self.run(Cmd::ShowInFolder, &ctx);
+            }
+        } else if !controls && self.paused && self.current.is_some() {
+            // Paused, the buttons away: a small mark in the corner says so.
+            let r = 9.0;
+            let center = Pos2::new(area.left() + r + 8.0, area.top() + r + 8.0);
+            crate::ui::round_mark(ui, Icon::Pause, center, r, 0.8);
+        }
+
         let close_opacity = ctx.animate_bool_with_time(
             ui.id().with("close"),
             hovering && (recent || on_cross),

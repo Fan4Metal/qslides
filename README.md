@@ -41,13 +41,13 @@ The executables are not code-signed, so Windows SmartScreen may warn about an un
 
 ## Usage
 
-The window shows the current slide on a black background. Dragging the picture moves the window, dragging its edges and corners sizes it. When the pointer moves over the window, the **Previous**, **Pause** and **Next** buttons appear at its bottom, and a cross that closes the program at its top right corner; they fade out again after a few seconds. A double click opens the file shown in the program Windows associates with it.
+The window shows the current slide on a black background. Dragging the picture moves the window, dragging its edges and corners sizes it. When the pointer moves over the window, the **Previous**, **Pause** and **Next** buttons appear at its bottom, **Open the file** (in the program Windows associates with it) and **Show in its folder** (in Explorer) at its top left corner, and a cross that closes the program at its top right corner; they fade out again after a few seconds. A double click opens the file shown in the program Windows associates with it.
 
 Everything else is in the menu of the right mouse button. A click on the tray icon brings the widget in front of other windows; the right button on the tray icon opens a short system menu: **qslides** does the same, **Exit** closes the program. The widget's menu is a small panel in a window of its own, so it extends beyond the edges of a small widget; near the edges of the screen it opens to the left or upward. It closes on a click elsewhere or on `Esc`; the settings in it take effect at once and leave it open.
 
 | Part | What it does |
 |---|---|
-| Buttons at the top | **Previous**, **Pause**, **Next** and the number of the file shown out of all the files of the show (`12 / 340`); **Open the file** in its program, **Show in its folder** in Explorer |
+| Buttons at the top | **Previous**, **Pause**, **Next** and the number of the file shown out of all the files of the show (`12 / 340`); at the right, **About qslides** (`F1`: version, language, update check) and a cross that closes the menu |
 | **Show each for** | A slider for the time a slide stays, from 1 second to 1 hour |
 | **Order** | **By name**, **By date**, **Random** |
 | **Show** | **Pictures**, **Videos**: each switched on or off by itself, at least one stays on |
@@ -60,8 +60,6 @@ Everything else is in the menu of the right mouse button. A click on the tray ic
 | **On the desktop, under all windows** | The window stays under other windows, as a picture on the desktop |
 | **Start with Windows** | The program starts when the user signs in |
 | **Only in the tray** | No button on the taskbar; an icon in the notification area instead |
-| **About qslides** | Version, language, update check |
-
 **Always on top** and **On the desktop** exclude each other. On the desktop, a click on the window does not bring it forward; a click on the tray icon or a second start of the program does, until another program is activated.
 
 Only one copy of the program runs at a time: starting it again brings the window already open to the front.

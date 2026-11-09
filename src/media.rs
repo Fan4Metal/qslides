@@ -1,7 +1,8 @@
 //! Decoding: pictures through Windows Imaging Component, videos through the
 //! Media Foundation source reader (only the picture: the sound stream is
-//! never selected). Windows' own codecs, so no library ships with the exe:
-//! JPEG, PNG, GIF, BMP, TIFF and JPEG XR always; HEIC, AVIF and WebP with
+//! never selected; `audio.rs` plays it apart when it is wanted). Windows'
+//! own codecs, so no library ships with the exe: JPEG, PNG, GIF, BMP,
+//! TIFF and JPEG XR always; HEIC, AVIF and WebP with
 //! their extensions from the Microsoft Store; H.264, HEVC (with its
 //! extension), MPEG-4, WMV and VP9 videos in MP4, MOV, MKV, AVI, WMV and
 //! WebM.
@@ -193,8 +194,9 @@ pub enum VideoMsg {
     /// (100 ns units; a looped video's times go on growing).
     Frame(i64, ColorImage),
     /// The next frame begins another piece of the video, further on
-    /// (shown with a cross-fade).
-    Cut,
+    /// (shown with a cross-fade), at this time from the video's start
+    /// (100 ns units): the sound goes there with it.
+    Cut(i64),
     /// The last frame was sent.
     End,
     Failed(String),
@@ -578,7 +580,7 @@ fn decode_video(
         frames += 1;
         if cut {
             cut = false;
-            if tx.send(VideoMsg::Cut).is_err() {
+            if tx.send(VideoMsg::Cut(time - base)).is_err() {
                 return Ok(());
             }
         }
@@ -761,7 +763,7 @@ mod tests {
         let (mut times, mut cuts) = (Vec::new(), 0);
         loop {
             match video.rx.recv_timeout(std::time::Duration::from_secs(10)) {
-                Ok(VideoMsg::Cut) => {
+                Ok(VideoMsg::Cut(_)) => {
                     cuts += 1;
                     println!(
                         "cut after {:.3} s, at {:.2} s of decoding",
@@ -794,7 +796,7 @@ mod tests {
         let mut frames = 0;
         loop {
             match video.rx.recv_timeout(std::time::Duration::from_secs(10)) {
-                Ok(VideoMsg::Cut) => {}
+                Ok(VideoMsg::Cut(_)) => {}
                 Ok(VideoMsg::Frame(t, image)) => {
                     if frames < 3 || frames % 100 == 0 {
                         println!(
@@ -849,7 +851,7 @@ mod tests {
             let mut times = Vec::new();
             loop {
                 match video.rx.recv_timeout(std::time::Duration::from_secs(10)) {
-                    Ok(VideoMsg::Cut) => {}
+                    Ok(VideoMsg::Cut(_)) => {}
                     Ok(VideoMsg::Frame(t, _)) => {
                         times.push(t);
                         if until.is_some_and(|u| t > u) {

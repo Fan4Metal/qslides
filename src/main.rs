@@ -1,5 +1,5 @@
 //! qslides: a desktop photo frame, a frameless widget showing a slideshow
-//! of the pictures and silent videos in the folders of its library.
+//! of the pictures and videos in the folders of its library.
 
 // The release build is a GUI program without a console; the debug build
 // keeps it, so `eprintln!`, logs and panics are seen while developing.
@@ -10,6 +10,7 @@
 mod i18n;
 
 mod app;
+mod audio;
 mod border;
 mod caption;
 mod dates;

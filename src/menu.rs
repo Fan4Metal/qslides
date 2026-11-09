@@ -50,6 +50,8 @@ pub enum Cmd {
     /// to its end (0: none).
     VideoTime(VideoLength, u32),
     VideoPieces(u32),
+    /// The volume of videos' sound, 0 (none) to 100.
+    Volume(u32),
     /// The caption with a part switched on or off.
     Caption(Caption),
     Aspect(Option<(u32, u32)>),
@@ -100,6 +102,7 @@ pub struct State {
     pub video: VideoLength,
     pub video_limit: u32,
     pub video_pieces: u32,
+    pub volume: u32,
     pub caption: Caption,
     pub aspect: Option<(u32, u32)>,
     pub layer: Layer,
@@ -396,6 +399,26 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
                 cmds.push(Cmd::VideoPieces(pieces));
             }
             ui.end_row();
+
+            // The sound, off at the left: one slider for both.
+            ui.label(tr!("Sound", "Звук"));
+            let mut volume = s.volume.min(100);
+            let slider = egui::Slider::new(&mut volume, 0..=100)
+                .step_by(5.0)
+                .show_value(false);
+            let response = ui.add(slider).on_hover_text(tr!(
+                "The volume of videos' sound; at the left, none",
+                "Громкость звука видео; слева — без звука"
+            ));
+            ui.label(if volume == 0 {
+                tr!("off", "выкл.").to_owned()
+            } else {
+                format!("{volume} %")
+            });
+            if response.changed() && volume != s.volume {
+                cmds.push(Cmd::Volume(volume));
+            }
+            ui.end_row();
         });
     // Switches that add up, not a choice: each part on or off.
     heading(ui, tr!("Caption", "Подпись"));
@@ -548,6 +571,7 @@ mod tests {
             video: VideoLength::Whole,
             video_limit: 120,
             video_pieces: 6,
+            volume: 40,
             caption: Caption::NONE.toggled(CaptionPart::Name),
             aspect: Some((16, 9)),
             layer: Layer::Top,

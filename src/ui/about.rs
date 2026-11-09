@@ -130,8 +130,8 @@ impl AboutWindow {
         // One sentence, the same as Cargo.toml's description and the
         // README tagline; the Russian one is written by hand.
         ui.label(tr!(
-            "A desktop photo frame that shows pictures and silent videos from your folders.",
-            "Фоторамка на рабочем столе: слайд-шоу картинок и видео без звука из ваших папок."
+            "A desktop photo frame that shows pictures and videos from your folders.",
+            "Фоторамка на рабочем столе: слайд-шоу картинок и видео из ваших папок."
         ));
         ui.add_space(8.0);
         if !AUTHORS.is_empty() {

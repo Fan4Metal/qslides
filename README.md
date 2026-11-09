@@ -4,7 +4,7 @@
 
 <h1 align="center">qslides</h1>
 
-<p align="center">A desktop photo frame that shows pictures and silent videos from your folders</p>
+<p align="center">A desktop photo frame that shows pictures and videos from your folders</p>
 
 <p align="center">
   <a href="https://github.com/Fan4Metal/qslides/releases/latest"><img src="https://img.shields.io/github/v/release/Fan4Metal/qslides?label=release" alt="Latest release"></a>
@@ -15,12 +15,12 @@
 
 <p align="center"><b>English</b> | <a href="README.ru.md">Русский</a></p>
 
-qslides is a small widget for the Windows desktop that works as a photo frame. Several folders are added to its library, and the widget shows a slideshow of the pictures and videos found in them and in all their subfolders. Videos play without sound. The window has no frame or title bar: it is moved by dragging the picture, sized by its edges, and controlled through the menu of the right mouse button. Pictures and videos are decoded by the codecs of Windows itself, so the program consists of a single executable file.
+qslides is a small widget for the Windows desktop that works as a photo frame. Several folders are added to its library, and the widget shows a slideshow of the pictures and videos found in them and in all their subfolders. Videos play without sound unless their sound is turned up in the menu. The window has no frame or title bar: it is moved by dragging the picture, sized by its edges, and controlled through the menu of the right mouse button. Pictures and videos are decoded by the codecs of Windows itself, so the program consists of a single executable file.
 
 ## Features
 
 - **A library of folders**: any number of folders, scanned with all their subfolders (see [Library](#library)).
-- **Pictures and videos**: JPEG, PNG, GIF, BMP, TIFF, JPEG XR, and HEIC, AVIF and WebP when their extensions from the Microsoft Store are installed; MP4, MOV, MKV, AVI, WMV, WebM and other videos that Windows plays, without sound.
+- **Pictures and videos**: JPEG, PNG, GIF, BMP, TIFF, JPEG XR, and HEIC, AVIF and WebP when their extensions from the Microsoft Store are installed; MP4, MOV, MKV, AVI, WMV, WebM and other videos that Windows plays, without sound or with it at a volume of the user's choice.
 - **Slideshow settings**: the time each slide stays (1 second to an hour), the order (by name, by date, random), pictures, videos or both, a picture fitted whole or filling the window, a frame round it in one of several styles and widths, videos played as long as pictures, for a time of their own or whole, a longer video shown in several pieces, a caption with the folder, the file's name and the date it was taken, each switched on by itself (see [Slideshow](#slideshow)).
 - **A frameless window** with presets of its proportions, from 16:9 to 9:16, kept while the window is sized.
 - **Start with Windows, always on top or on the desktop under all windows, only in the tray**: each is one switch of the menu; always on top, the widget gives way to full-screen programs.
@@ -53,7 +53,7 @@ Everything else is in the menu of the right mouse button. A click on the tray ic
 | **Show** | **Pictures**, **Videos**: each switched on or off by itself, at least one stays on |
 | **Picture** | **Fit whole** or **Fill the window** |
 | **Frame** | **None**, **Black**, **White**, **Graphite**, **Wood**, **Mat**; **Width**: 1 to 10 |
-| **Videos** | **Length**: as pictures, 10 seconds to 1 hour, or whole; **In pieces**: 1 to 10 |
+| **Videos** | **Length**: as pictures, 10 seconds to 1 hour, or whole; **In pieces**: 1 to 10; **Sound**: off, or a volume from 5 to 100 % |
 | **Caption** | **Folder**, **File name**, **Date taken**: each switched on or off by itself, those switched on written together in the bottom left corner of the slide |
 | **Window proportions** | **Any**, 16:9, 16:10, 3:2, 4:3, 5:4, 1:1, 4:5, 3:4, 2:3, 9:16 |
 | **Folders** | The library: each folder with buttons to open it in Explorer and to remove it, **Add a folder…**, **Look for new files** |
@@ -85,7 +85,7 @@ A frame is painted along the edges of the window, and the slide is shown inside 
 
 The caption is written in the bottom left corner of the slide and gives way to the buttons while they are shown. Its parts are switched on separately, and those switched on are written one after the other, separated by dots: **Folder** shows the name of the file's folder, **File name** the name of the file without its extension, **Date taken** the day a photo was taken (from its EXIF data) or a video was recorded, as Windows reads it. A file without such a date has no date in its caption; with no part switched on, there is no caption.
 
-The **Length** slider sets the time a video has: as long as a picture (**as pictures**; a shorter video starts again from the beginning), a time of its own from 10 seconds to 1 hour (a shorter video is shown once), or **whole**, however long it is. A video longer than its time is shown in the number of pieces set by **In pieces**: the time is divided equally between them, the first piece is taken from the beginning of the video, the last ends at its end, the others lie evenly between them, and each piece fades into the next as slides do. With one piece, only the beginning of the video is shown. A piece is never shorter than 2 seconds, so a short time may give fewer pieces. The sound of a video is never played. Videos are decoded on the graphics card when Windows can, so 4K videos of a phone play smoothly; a video is decoded no larger than the window needs, and a slide shows at most 30 frames a second. A file that cannot be decoded is skipped until the next scan.
+The **Length** slider sets the time a video has: as long as a picture (**as pictures**; a shorter video starts again from the beginning), a time of its own from 10 seconds to 1 hour (a shorter video is shown once), or **whole**, however long it is. A video longer than its time is shown in the number of pieces set by **In pieces**: the time is divided equally between them, the first piece is taken from the beginning of the video, the last ends at its end, the others lie evenly between them, and each piece fades into the next as slides do. With one piece, only the beginning of the video is shown. A piece is never shorter than 2 seconds, so a short time may give fewer pieces. With **Sound** off (at the left), the default, the sound of a video is never played; turned up, it plays on the default output device of Windows, starts with the video's first frame, pauses with the slideshow, follows the video to each of its pieces and starts again with a looped video. Turned up while a video is shown, its sound starts where the picture is. Videos are decoded on the graphics card when Windows can, so 4K videos of a phone play smoothly; a video is decoded no larger than the window needs, and a slide shows at most 30 frames a second. A file that cannot be decoded is skipped until the next scan.
 
 <details><summary>Which formats need extensions from the Microsoft Store</summary>
 

@@ -25,6 +25,7 @@ const FIT: &str = "fit";
 const VIDEO: &str = "video";
 const VIDEO_LIMIT: &str = "video_limit";
 const VIDEO_PIECES: &str = "video_pieces";
+const VOLUME: &str = "volume";
 const CAPTION: &str = "caption";
 const BORDER: &str = "border";
 const BORDER_WIDTH: &str = "border_width";
@@ -115,6 +116,8 @@ pub struct Settings {
     /// The pieces a video longer than its time is shown in (1 to
     /// `show::MAX_PIECES`; 1: its start only).
     pub video_pieces: u32,
+    /// The volume of videos' sound, 0 to 100; 0: none (by default).
+    pub volume: u32,
     pub caption: Caption,
     /// The frame painted round the window's edges.
     pub border: Border,
@@ -146,6 +149,7 @@ impl Default for Settings {
             video: VideoLength::Whole,
             video_limit: 0,
             video_pieces: 1,
+            volume: 0,
             caption: Caption::NONE,
             border: Border::None,
             border_width: 4,
@@ -207,6 +211,10 @@ impl Settings {
                 .and_then(|v| v.parse().ok())
                 .filter(|n: &u32| (1..=crate::show::MAX_PIECES).contains(n))
                 .unwrap_or(d.video_pieces),
+            volume: get(VOLUME)
+                .and_then(|v| v.parse().ok())
+                .filter(|&n: &u32| n <= 100)
+                .unwrap_or(d.volume),
             caption: get(CAPTION)
                 .as_deref()
                 .and_then(Caption::from_name)
@@ -246,6 +254,7 @@ impl Settings {
         storage.set_string(VIDEO, self.video.name().into());
         storage.set_string(VIDEO_LIMIT, self.video_limit.to_string());
         storage.set_string(VIDEO_PIECES, self.video_pieces.to_string());
+        storage.set_string(VOLUME, self.volume.to_string());
         storage.set_string(CAPTION, self.caption.name());
         storage.set_string(BORDER, self.border.name().into());
         storage.set_string(BORDER_WIDTH, self.border_width.to_string());
@@ -299,6 +308,7 @@ mod tests {
             video: VideoLength::Interval,
             video_limit: 120,
             video_pieces: 6,
+            volume: 35,
             caption: Caption::NONE
                 .toggled(CaptionPart::Folder)
                 .toggled(CaptionPart::Date),
@@ -333,6 +343,7 @@ mod tests {
             (VIDEO, "muted"),
             (VIDEO_LIMIT, "-5"),
             (VIDEO_PIECES, "0"),
+            (VOLUME, "101"),
             (CAPTION, "exif"),
             (BORDER, "gold"),
             (BORDER_WIDTH, "11"),

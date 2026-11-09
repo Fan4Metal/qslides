@@ -19,7 +19,7 @@ pub const IMAGE_EXTENSIONS: &[&str] = &[
     "heif", "hif", "avif", "jxr", "wdp", "ico",
 ];
 
-/// File extensions of videos, decoded by Media Foundation without sound.
+/// File extensions of videos, decoded by Media Foundation (their sound played apart, `audio.rs`).
 pub const VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "m4v", "mov", "wmv", "asf", "avi", "mkv", "webm", "3gp", "3g2", "mts", "m2ts", "ts",
 ];

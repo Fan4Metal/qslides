@@ -23,6 +23,7 @@ use egui::{
     vec2,
 };
 
+use crate::audio::{Audio, gain};
 use crate::border::Border;
 use crate::library::{Item, Kind, Scanned};
 use crate::loader::{Done, Loader};
@@ -98,27 +99,46 @@ struct Playing {
     texture: TextureHandle,
     /// The time of its first frame (100 ns units): the clock counts from it.
     first: i64,
-    /// A frame received but not yet due, and whether it begins a piece.
-    pending: Option<(i64, ColorImage, bool)>,
+    /// A frame received but not yet due, and where in the video the piece
+    /// it begins starts, if it begins one.
+    pending: Option<(i64, ColorImage, Option<i64>)>,
     /// The decoder sent its last frame.
     ended: bool,
     /// The time it has by the clock: as long as a picture, its limit when
     /// shown to its end; `None`: to its end, however long.
     limit: Option<Duration>,
-    /// A cut came: the next frame begins another piece of the video.
-    cut: bool,
+    /// A cut came: the next frame begins another piece of the video, which
+    /// starts this far into it (100 ns units).
+    cut: Option<i64>,
     /// It is shown in pieces (a cut has come): the decoder ends it when its
     /// time is up, the clock only if it falls behind.
     in_pieces: bool,
     /// The texture of the piece before, to fade out under the new one.
     faded: Option<TextureHandle>,
+    /// Its sound, while the volume is up.
+    audio: Option<Audio>,
+    /// When by the clock the piece shown began, and where in the video
+    /// (100 ns units): the place the sound goes to.
+    origin: (Duration, i64),
 }
 
 /// How much longer than its time the clock lets a video shown in pieces
 /// run: the decoder ends it, after seeks that took some time.
 const PIECES_GRACE: Duration = Duration::from_secs(5);
 
+/// A time of Media Foundation (100 ns units) as a duration, none if below 0.
+fn media_duration(units: i64) -> Duration {
+    Duration::from_nanos(units.max(0) as u64 * 100)
+}
+
 impl Playing {
+    /// Where in the video the frame due at `elapsed` by the clock is, in
+    /// seconds (a looped video's sound goes round within its length).
+    fn position(&self, elapsed: Duration) -> f64 {
+        let (since, at) = self.origin;
+        at as f64 / crate::media::SECOND as f64 + elapsed.saturating_sub(since).as_secs_f64()
+    }
+
     /// The time after which the clock moves the show on, if any.
     fn clock_limit(&self) -> Option<Duration> {
         let grace = if self.in_pieces {
@@ -141,10 +161,10 @@ impl Playing {
             if self.pending.is_none() {
                 match self.video.rx.try_recv() {
                     Ok(VideoMsg::Frame(t, image)) => {
-                        self.pending = Some((t, image, std::mem::take(&mut self.cut)));
+                        self.pending = Some((t, image, self.cut.take()));
                     }
-                    Ok(VideoMsg::Cut) => {
-                        (self.cut, self.in_pieces) = (true, true);
+                    Ok(VideoMsg::Cut(at)) => {
+                        (self.cut, self.in_pieces) = (Some(at), true);
                         continue;
                     }
                     Ok(VideoMsg::End) | Err(TryRecvError::Disconnected) => {
@@ -163,16 +183,21 @@ impl Playing {
             if due > now {
                 break Some(Duration::from_nanos(((due - now) * 100) as u64));
             }
-            let Some((_, image, cut)) = self.pending.take() else {
+            let Some((t, image, cut)) = self.pending.take() else {
                 break None;
             };
-            if cut {
+            if let Some(at) = cut {
                 // The piece before ends on its last frame due.
                 if let Some(last) = shown.take() {
                     self.texture.set(last, TextureOptions::LINEAR);
                 }
                 let new = ctx.load_texture("video", image, TextureOptions::LINEAR);
                 self.faded = Some(std::mem::replace(&mut self.texture, new));
+                // The sound jumps with the picture.
+                self.origin = (media_duration(t - self.first), at);
+                if let Some(audio) = &self.audio {
+                    audio.seek(at as f64 / crate::media::SECOND as f64);
+                }
             } else {
                 shown = Some(image);
             }
@@ -186,7 +211,8 @@ impl Playing {
 
 enum Content {
     Image(TextureHandle),
-    Video(Playing),
+    /// Boxed: much larger than a picture's texture.
+    Video(Box<Playing>),
 }
 
 impl Content {
@@ -210,8 +236,9 @@ struct Slide {
 enum Prep {
     /// The loader's job.
     Image(u64),
-    /// Started, waiting for its first frame.
-    Video(Video),
+    /// Started, waiting for its first frame; its sound loading, while the
+    /// volume is up.
+    Video(Video, Option<Audio>),
     Ready(Content),
     Failed(String),
 }
@@ -263,6 +290,8 @@ pub struct App {
     video_limit: u32,
     /// The pieces a video longer than its time is shown in.
     video_pieces: u32,
+    /// The volume of videos' sound, 0 to 100; 0: none.
+    volume: u32,
     caption: Caption,
     /// The dates files were taken, for `CaptionPart::Date`.
     dates: crate::dates::Dates,
@@ -377,6 +406,7 @@ impl App {
             video: settings.video,
             video_limit: settings.video_limit,
             video_pieces: settings.video_pieces,
+            volume: settings.volume,
             caption: settings.caption,
             dates: crate::dates::Dates::new(ctx.clone()),
             aspect: settings.aspect,
@@ -579,7 +609,9 @@ impl App {
                     time: (self.video_time()).map(|t| (t.as_nanos() / 100) as i64),
                     pieces: self.video_pieces,
                 };
-                Prep::Video(Video::start(&item.path, side, plan, ctx.clone()))
+                let audio = (self.volume > 0)
+                    .then(|| Audio::start(&item.path, plan.looped, gain(self.volume)));
+                Prep::Video(Video::start(&item.path, side, plan, ctx.clone()), audio)
             }
         };
         self.upcoming = Some(Upcoming { item, step, prep });
@@ -598,28 +630,30 @@ impl App {
                     };
                 }
             }
-            Prep::Video(video) => match video.rx.try_recv() {
+            Prep::Video(video, _) => match video.rx.try_recv() {
                 Ok(VideoMsg::Frame(t, image)) => {
                     let texture = ctx.load_texture("video", image, TextureOptions::LINEAR);
-                    let Prep::Video(video) =
+                    let Prep::Video(video, audio) =
                         std::mem::replace(&mut up.prep, Prep::Failed(String::new()))
                     else {
                         unreachable!()
                     };
-                    up.prep = Prep::Ready(Content::Video(Playing {
+                    up.prep = Prep::Ready(Content::Video(Box::new(Playing {
                         video,
                         texture,
                         first: t,
                         pending: None,
                         ended: false,
                         limit,
-                        cut: false,
+                        cut: None,
                         in_pieces: false,
                         faded: None,
-                    }));
+                        audio,
+                        origin: (Duration::ZERO, 0),
+                    })));
                 }
                 // Not before a first frame.
-                Ok(VideoMsg::Cut) => {}
+                Ok(VideoMsg::Cut(_)) => {}
                 Ok(VideoMsg::End) => up.prep = Prep::Failed("no frame".into()),
                 Ok(VideoMsg::Failed(e)) => up.prep = Prep::Failed(e),
                 Err(TryRecvError::Disconnected) => {
@@ -658,6 +692,8 @@ impl App {
                     clock: Clock::new(self.halted()),
                     step: self.step,
                 });
+                // The sound starts with its video's first frame.
+                self.hold_sound();
             }
             Prep::Failed(e) => {
                 log::info!("cannot show {}: {e}", up.item.path.display());
@@ -778,6 +814,54 @@ impl App {
         if let Some(slide) = &mut self.current {
             slide.clock.pause(halted);
         }
+        self.hold_sound();
+    }
+
+    /// The sound of the video on the screen paused or playing, as the show
+    /// is.
+    fn hold_sound(&self) {
+        if let Some(Slide {
+            content: Content::Video(playing),
+            ..
+        }) = &self.current
+            && let Some(audio) = &playing.audio
+        {
+            if self.halted() {
+                audio.pause();
+            } else {
+                audio.play();
+            }
+        }
+    }
+
+    /// The volume of videos set: the sound of the video on the screen
+    /// louder or softer, started where its picture is or stopped.
+    fn set_volume(&mut self, volume: u32) {
+        if (self.volume == 0) != (volume == 0) {
+            // Made ready with its sound or without.
+            self.drop_upcoming_video();
+        }
+        self.volume = volume;
+        let looped = self.video == VideoLength::Interval;
+        let Some(Slide {
+            item,
+            content: Content::Video(playing),
+            clock,
+            ..
+        }) = &mut self.current
+        else {
+            return;
+        };
+        if volume == 0 {
+            playing.audio = None;
+        } else if let Some(audio) = &playing.audio {
+            audio.set_volume(gain(volume));
+        } else {
+            let audio = Audio::start(&item.path, looped, gain(volume));
+            audio.seek(playing.position(clock.elapsed()));
+            playing.audio = Some(audio);
+            self.hold_sound();
+        }
     }
 
     fn menu_state(&self) -> crate::menu::State {
@@ -797,6 +881,7 @@ impl App {
             video: self.video,
             video_limit: self.video_limit,
             video_pieces: self.video_pieces,
+            volume: self.volume,
             caption: self.caption,
             aspect: self.aspect,
             layer: self.layer,
@@ -879,6 +964,7 @@ impl App {
                 }
                 self.drop_upcoming_video();
             }
+            Cmd::Volume(v) => self.set_volume(v),
             Cmd::VideoPieces(n) => {
                 self.video_pieces = n;
                 self.drop_upcoming_video();
@@ -1625,6 +1711,7 @@ impl eframe::App for App {
             video: self.video,
             video_limit: self.video_limit,
             video_pieces: self.video_pieces,
+            volume: self.volume,
             caption: self.caption,
             aspect: self.aspect,
             layer: self.layer,

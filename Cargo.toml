@@ -10,7 +10,7 @@ authors = ["Fan4_Metal"]
 edition = "2024"
 # One sentence, English: it is shown in About, in the exe's version
 # resource (build.rs) and as the README tagline.
-description = "A desktop photo frame that shows pictures and silent videos from your folders"
+description = "A desktop photo frame that shows pictures and videos from your folders"
 license = "MIT"
 repository = "https://github.com/Fan4Metal/qslides"
 
@@ -61,6 +61,9 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell",
     "Win32_UI_Shell_PropertiesSystem", # the date a photo was taken (its caption)
 ] }
+# Named by the code `#[implement]` generates (the Media Engine's callback,
+# audio.rs); already a dependency of `windows`, the same version.
+windows-core = "0.62"
 
 [target.'cfg(windows)'.build-dependencies]
 # Embeds the icon and the version information into the exe.

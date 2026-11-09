@@ -1258,8 +1258,12 @@ impl App {
             Border::None
         };
         let opening = border.opening(area, self.border_width);
+        // Under the whole window, not the opening only: a rectangle's edge
+        // is smoothed half a pixel inside it, and at an opening's edge on a
+        // fraction of a pixel the black under it showed as a dark line along
+        // the mat (the frame's mesh, not smoothed, does not cover it).
         if border.ground() != Color32::BLACK {
-            painter.rect_filled(opening, 0.0, border.ground());
+            painter.rect_filled(area, 0.0, border.ground());
         }
         let t = match fading {
             Some((ref old, since)) if since < FADE => {

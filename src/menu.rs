@@ -50,6 +50,8 @@ pub enum Cmd {
     /// to its end (0: none).
     VideoTime(VideoLength, u32),
     VideoPieces(u32),
+    /// The seek bar over a video shown whole, switched on or off.
+    VideoBar,
     /// The caption with a part switched on or off.
     Caption(Caption),
     Aspect(Option<(u32, u32)>),
@@ -100,6 +102,7 @@ pub struct State {
     pub video: VideoLength,
     pub video_limit: u32,
     pub video_pieces: u32,
+    pub video_bar: bool,
     pub caption: Caption,
     pub aspect: Option<(u32, u32)>,
     pub layer: Layer,
@@ -379,21 +382,31 @@ fn content(ui: &mut Ui, s: &State, cmds: &mut Vec<Cmd>) {
             }
             ui.end_row();
 
-            // Whole, a video is never longer than its time.
-            let cut = !(s.video == VideoLength::Whole && s.video_limit == 0);
-            ui.add_enabled(cut, egui::Label::new(tr!("In pieces", "Кусками")));
-            let mut pieces = s.video_pieces.clamp(1, MAX_PIECES);
-            let slider = egui::Slider::new(&mut pieces, 1..=MAX_PIECES).show_value(false);
-            let response = ui.add_enabled(cut, slider).on_hover_text(tr!(
-                "A video longer than its time is shown in so many pieces spread from its start to its end, with a fade between them; 1: its start only",
-                "Видео длиннее своего времени показывается столькими кусками от начала до конца, с растворением между ними; 1 — только начало"
-            )).on_disabled_hover_text(tr!(
-                "With a length other than \"whole\"",
-                "При длине не «целиком»"
-            ));
-            ui.add_enabled(cut, egui::Label::new(pieces.to_string()));
-            if response.changed() && pieces != s.video_pieces {
-                cmds.push(Cmd::VideoPieces(pieces));
+            // Whole, a video is never longer than its time and is not cut:
+            // a seek bar instead, under the slider.
+            if s.video == VideoLength::Whole && s.video_limit == 0 {
+                ui.label("");
+                let mut on = s.video_bar;
+                let response = ui.checkbox(&mut on, tr!("Seek bar", "Полоса прокрутки"));
+                let response = response.on_hover_text(tr!(
+                    "A bar along the bottom of a video, with the buttons: where it is, and a click or a drag goes elsewhere in it",
+                    "Полоса внизу видео, вместе с кнопками: где оно сейчас, а щелчок или перетаскивание переходит в другое место"
+                ));
+                if response.changed() {
+                    cmds.push(Cmd::VideoBar);
+                }
+            } else {
+                ui.label(tr!("In pieces", "Кусками"));
+                let mut pieces = s.video_pieces.clamp(1, MAX_PIECES);
+                let slider = egui::Slider::new(&mut pieces, 1..=MAX_PIECES).show_value(false);
+                let response = ui.add(slider).on_hover_text(tr!(
+                    "A video longer than its time is shown in so many pieces spread from its start to its end, with a fade between them; 1: its start only",
+                    "Видео длиннее своего времени показывается столькими кусками от начала до конца, с растворением между ними; 1 — только начало"
+                ));
+                ui.label(pieces.to_string());
+                if response.changed() && pieces != s.video_pieces {
+                    cmds.push(Cmd::VideoPieces(pieces));
+                }
             }
             ui.end_row();
         });
@@ -548,6 +561,7 @@ mod tests {
             video: VideoLength::Whole,
             video_limit: 120,
             video_pieces: 6,
+            video_bar: false,
             caption: Caption::NONE.toggled(CaptionPart::Name),
             aspect: Some((16, 9)),
             layer: Layer::Top,
@@ -563,10 +577,15 @@ mod tests {
     #[test]
     fn the_menu_draws_and_asks_for_nothing_by_itself() {
         let ctx = egui::Context::default();
-        for _ in 0..2 {
+        // With a limit (the pieces), and whole (the seek bar).
+        let whole = State {
+            video_limit: 0,
+            ..state()
+        };
+        for s in [state(), state(), whole] {
             let mut cmds = Vec::new();
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
-                egui::CentralPanel::default().show(ui, |ui| content(ui, &state(), &mut cmds));
+                egui::CentralPanel::default().show(ui, |ui| content(ui, &s, &mut cmds));
             });
             out.textures_delta.clear();
             assert!(cmds.is_empty(), "{cmds:?}");

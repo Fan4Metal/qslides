@@ -14,7 +14,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering::Relaxed};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 
 use egui::{Color32, ColorImage};
@@ -197,6 +197,13 @@ pub enum VideoMsg {
     /// (shown with a cross-fade), at this time from the video's start
     /// (100 ns units): the sound goes there with it.
     Cut(i64),
+    /// The next frame is the first after a seek asked for with
+    /// [`Video::seek`]: the place asked for, and where the frame is (100 ns
+    /// units from the video's start).
+    Seeked {
+        to: i64,
+        at: i64,
+    },
     /// The last frame was sent.
     End,
     Failed(String),
@@ -244,12 +251,22 @@ pub fn pieces(duration: Option<i64>, time: Option<i64>, wanted: u32) -> Option<(
 /// A video being decoded on its own thread. Dropped, its thread stops.
 pub struct Video {
     pub rx: Receiver<VideoMsg>,
-    stop: Arc<AtomicBool>,
+    shared: Arc<Shared>,
+}
+
+/// What the UI and a video's thread share.
+struct Shared {
+    stop: AtomicBool,
+    /// A place to go to (100 ns units from the start), taken by the thread;
+    /// below 0: none.
+    seek: AtomicI64,
+    /// The video's length (100 ns units) once it is open, 0 if not known.
+    length: AtomicI64,
 }
 
 impl Drop for Video {
     fn drop(&mut self) {
-        self.stop.store(true, Relaxed);
+        self.shared.stop.store(true, Relaxed);
     }
 }
 
@@ -261,9 +278,13 @@ impl Video {
     /// `plan` says. `ctx` is asked to repaint when a frame comes.
     pub fn start(path: &Path, max_side: u32, plan: Plan, ctx: egui::Context) -> Video {
         let (tx, rx) = sync_channel(AHEAD);
-        let stop = Arc::new(AtomicBool::new(false));
+        let shared = Arc::new(Shared {
+            stop: AtomicBool::new(false),
+            seek: AtomicI64::new(-1),
+            length: AtomicI64::new(0),
+        });
         let path = path.to_path_buf();
-        let stopped = stop.clone();
+        let thread = shared.clone();
         let spawned = std::thread::Builder::new()
             .name("video".into())
             .spawn(move || {
@@ -273,7 +294,7 @@ impl Video {
                     ctx.request_repaint();
                     return;
                 }
-                let result = decode_video(&path, max_side, plan, &tx, &stopped, &ctx);
+                let result = decode_video(&path, max_side, plan, &tx, &thread, &ctx);
                 if let Err(e) = result {
                     let _ = tx.send(VideoMsg::Failed(e));
                     ctx.request_repaint();
@@ -285,7 +306,20 @@ impl Video {
         if let Err(e) = spawned {
             log::warn!("cannot start a video thread: {e}");
         }
-        Video { rx, stop }
+        Video { rx, shared }
+    }
+
+    /// Go to `to` (100 ns units from the start): the thread drops what it
+    /// was decoding and sends [`VideoMsg::Seeked`] before the first frame
+    /// from there. A video shown in pieces or looped is not sent anywhere.
+    pub fn seek(&self, to: i64) {
+        self.shared.seek.store(to.max(0), Relaxed);
+    }
+
+    /// The video's length (100 ns units), once it is open and if its source
+    /// says.
+    pub fn length(&self) -> Option<i64> {
+        Some(self.shared.length.load(Relaxed)).filter(|&l| l > 0)
     }
 }
 
@@ -444,7 +478,7 @@ fn decode_video(
     max_side: u32,
     plan: Plan,
     tx: &SyncSender<VideoMsg>,
-    stop: &AtomicBool,
+    shared: &Shared,
     ctx: &egui::Context,
 ) -> Result<(), String> {
     let opened = open_video_somehow(path, max_side)?;
@@ -470,6 +504,10 @@ fn decode_video(
         .and_then(|t| unsafe { t.GetUINT32(&MF_MT_DEFAULT_STRIDE) })
         .map_or(w as i32 * 4, |s| s as i32);
     let length = duration(&reader);
+    shared.length.store(length.unwrap_or(0), Relaxed);
+    // Only a video played once, from its start to its end, is sent to
+    // another place.
+    let seekable = !plan.looped && plan.time.is_none();
     // A video longer than its time: its pieces, and the one played.
     let cut_up = pieces(length, plan.time, plan.pieces);
     let mut piece = 0usize;
@@ -499,9 +537,16 @@ fn decode_video(
     // frame, whose time need not be 0 (MPEG-TS from cameras, an MP4 with
     // an edit list), else every round began with a stop that long.
     let mut rewound = false;
+    // A seek asked for: the place, and frames before it are dropped.
+    let mut seeking = None::<i64>;
     loop {
-        if stop.load(Relaxed) {
+        if shared.stop.load(Relaxed) {
             return Ok(());
+        }
+        let to = shared.seek.swap(-1, Relaxed);
+        if to >= 0 && seekable {
+            seek(to)?;
+            (seeking, rewound) = (Some(to), true);
         }
         let (mut flags, mut time, mut sample) = (0u32, 0i64, None::<IMFSample>);
         unsafe {
@@ -543,6 +588,10 @@ fn decode_video(
         }
         let Some(sample) = sample else { continue };
         let base = *base.get_or_insert(time);
+        // Decoded from the key frame before the place asked for.
+        if seeking.is_some_and(|to| time - base < to) {
+            continue;
+        }
         if let Some((starts, len)) = &cut_up {
             let at = time - base;
             // Decoded from the key frame before the piece's start.
@@ -572,7 +621,7 @@ fn decode_video(
             rewound = false;
             offset = last + SECOND / 30 - time;
         }
-        if frames > 0 && offset + time < last + FRAME_STEP {
+        if frames > 0 && offset + time < last + FRAME_STEP && seeking.is_none() {
             continue;
         }
         let image = pixels(&sample, w as usize, h as usize, stride).map_err(|e| err("frame", e))?;
@@ -581,6 +630,17 @@ fn decode_video(
         if cut {
             cut = false;
             if tx.send(VideoMsg::Cut(time - base)).is_err() {
+                return Ok(());
+            }
+        }
+        if let Some(to) = seeking.take() {
+            let at = time - base;
+            log::debug!(
+                "sought {:.2} s, at {:.2} s",
+                to as f64 / SECOND as f64,
+                at as f64 / SECOND as f64
+            );
+            if tx.send(VideoMsg::Seeked { to, at }).is_err() {
                 return Ok(());
             }
         }
@@ -772,6 +832,7 @@ mod tests {
                     );
                 }
                 Ok(VideoMsg::Frame(t, _)) => times.push(t),
+                Ok(VideoMsg::Seeked { .. }) => panic!("not asked to seek"),
                 Ok(VideoMsg::End) => break,
                 Ok(VideoMsg::Failed(e)) => panic!("{e}"),
                 Err(e) => panic!("{e}"),
@@ -782,6 +843,57 @@ mod tests {
         assert_eq!(cuts, 2);
         assert!(times.windows(2).all(|w| w[1] > w[0]));
         assert!((5.5..6.5).contains(&shown), "{shown}");
+    }
+
+    /// The video named by `QSLIDES_VIDEO` (longer than 4 s) sent to the
+    /// middle after a few frames, as the seek bar does: the frames sent
+    /// before are passed over, the first after `Seeked` is at the place
+    /// asked for and the times go on growing, with `--nocapture`.
+    #[test]
+    #[ignore]
+    fn video_seeks() {
+        let path = std::path::PathBuf::from(std::env::var("QSLIDES_VIDEO").expect("QSLIDES_VIDEO"));
+        let video = Video::start(&path, 320, WHOLE, egui::Context::default());
+        let next = || match video.rx.recv_timeout(std::time::Duration::from_secs(10)) {
+            Ok(m) => m,
+            Err(e) => panic!("{e}"),
+        };
+        let mut last = 0;
+        for _ in 0..5 {
+            match next() {
+                VideoMsg::Frame(t, _) => last = t,
+                VideoMsg::Failed(e) => panic!("{e}"),
+                _ => {}
+            }
+        }
+        let length = video.length().expect("a length");
+        let to = length / 2;
+        let started = std::time::Instant::now();
+        video.seek(to);
+        let at = loop {
+            match next() {
+                VideoMsg::Frame(t, _) => last = t,
+                VideoMsg::Seeked { to: asked, at } => {
+                    assert_eq!(asked, to);
+                    break at;
+                }
+                VideoMsg::End => panic!("ended before the seek"),
+                VideoMsg::Failed(e) => panic!("{e}"),
+                VideoMsg::Cut(_) => {}
+            }
+        };
+        let VideoMsg::Frame(t, _) = next() else {
+            panic!("no frame after the seek")
+        };
+        println!(
+            "{:.2} s long, asked for {:.2} s, there at {:.2} s in {:.0} ms",
+            length as f64 / SECOND as f64,
+            to as f64 / SECOND as f64,
+            at as f64 / SECOND as f64,
+            started.elapsed().as_secs_f64() * 1e3
+        );
+        assert!((to..to + SECOND).contains(&at), "{at}");
+        assert!(t > last);
     }
 
     /// Decode the video named by `QSLIDES_VIDEO` and print its frames'
@@ -796,7 +908,7 @@ mod tests {
         let mut frames = 0;
         loop {
             match video.rx.recv_timeout(std::time::Duration::from_secs(10)) {
-                Ok(VideoMsg::Cut(_)) => {}
+                Ok(VideoMsg::Cut(_) | VideoMsg::Seeked { .. }) => {}
                 Ok(VideoMsg::Frame(t, image)) => {
                     if frames < 3 || frames % 100 == 0 {
                         println!(
@@ -851,7 +963,7 @@ mod tests {
             let mut times = Vec::new();
             loop {
                 match video.rx.recv_timeout(std::time::Duration::from_secs(10)) {
-                    Ok(VideoMsg::Cut(_)) => {}
+                    Ok(VideoMsg::Cut(_) | VideoMsg::Seeked { .. }) => {}
                     Ok(VideoMsg::Frame(t, _)) => {
                         times.push(t);
                         if until.is_some_and(|u| t > u) {

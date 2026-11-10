@@ -124,6 +124,12 @@ struct Playing {
     /// When by the clock the piece shown began, and where in the video
     /// (100 ns units): the place the sound goes to.
     origin: (Duration, i64),
+    /// A place asked for on the seek bar (100 ns units), until the decoder
+    /// says it is there: the frames sent before are dropped.
+    seeking: Option<i64>,
+    /// The decoder is there: the next frame is shown at once, from this
+    /// place in the video (100 ns units).
+    jump: Option<i64>,
 }
 
 /// How much longer than its time the clock lets a video shown in pieces
@@ -143,6 +149,34 @@ impl Playing {
         at as f64 / crate::media::SECOND as f64 + elapsed.saturating_sub(since).as_secs_f64()
     }
 
+    /// Where it is, as a share of its length, for the seek bar: the place
+    /// asked for while the decoder goes there; `None` if its length is not
+    /// known.
+    fn progress(&self, elapsed: Duration) -> Option<f32> {
+        let length = self.video.length()? as f64;
+        let at = match self.seeking.or(self.jump) {
+            Some(to) => to as f64,
+            None => self.position(elapsed) * crate::media::SECOND as f64,
+        };
+        Some((at / length).clamp(0.0, 1.0) as f32)
+    }
+
+    /// Go to `share` of its length (the seek bar).
+    fn seek(&mut self, share: f32) {
+        let Some(length) = self.video.length() else {
+            return;
+        };
+        if self.ended {
+            return;
+        }
+        let to = (f64::from(share.clamp(0.0, 1.0)) * length as f64) as i64;
+        // Not to the very end: there would be no frame to show.
+        let to = to.min(length - crate::media::SECOND / 4).max(0);
+        self.video.seek(to);
+        self.seeking = Some(to);
+        self.pending = None;
+    }
+
     /// The time after which the clock moves the show on, if any.
     fn clock_limit(&self) -> Option<Duration> {
         let grace = if self.in_pieces {
@@ -159,20 +193,41 @@ impl Playing {
     /// uploaded, though only the last was seen. The first frame of another
     /// piece goes into a texture of its own, the old one left in `faded`.
     fn pump(&mut self, elapsed: Duration, ctx: &egui::Context) -> Option<Duration> {
-        let now = self.first + (elapsed.as_nanos() / 100) as i64;
+        let since = (elapsed.as_nanos() / 100) as i64;
         let mut shown = None;
         let wait = loop {
             if self.pending.is_none() {
                 match self.video.rx.try_recv() {
+                    // Going to another place: what came before is dropped
+                    // (taking it also lets the decoder, waiting to send it,
+                    // see the seek).
+                    Ok(VideoMsg::Frame(..) | VideoMsg::Cut(_)) if self.seeking.is_some() => {
+                        continue;
+                    }
                     Ok(VideoMsg::Frame(t, image)) => {
+                        if let Some(at) = self.jump.take() {
+                            // Due now, the clock going on from here.
+                            self.first = t - since;
+                            self.origin = (elapsed, at);
+                            if let Some(audio) = &self.audio {
+                                audio.seek(at as f64 / crate::media::SECOND as f64);
+                            }
+                        }
                         self.pending = Some((t, image, self.cut.take()));
                     }
                     Ok(VideoMsg::Cut(at)) => {
                         (self.cut, self.in_pieces) = (Some(at), true);
                         continue;
                     }
+                    Ok(VideoMsg::Seeked { to, at }) => {
+                        // One for an earlier place is passed over.
+                        if self.seeking.is_none_or(|s| s == to) {
+                            (self.seeking, self.jump) = (None, Some(at));
+                        }
+                        continue;
+                    }
                     Ok(VideoMsg::End) | Err(TryRecvError::Disconnected) => {
-                        self.ended = true;
+                        (self.ended, self.seeking) = (true, None);
                         break None;
                     }
                     Ok(VideoMsg::Failed(e)) => {
@@ -183,6 +238,7 @@ impl Playing {
                     Err(TryRecvError::Empty) => break None,
                 }
             }
+            let now = self.first + since;
             let due = self.pending.as_ref().map_or(i64::MAX, |(t, ..)| *t);
             if due > now {
                 break Some(Duration::from_nanos(((due - now) * 100) as u64));
@@ -294,6 +350,8 @@ pub struct App {
     video_limit: u32,
     /// The pieces a video longer than its time is shown in.
     video_pieces: u32,
+    /// A seek bar over a video shown whole, with the buttons.
+    video_bar: bool,
     /// Videos are heard, at `volume` (`MIN_VOLUME` to 100, kept while the
     /// sound is off).
     sound: bool,
@@ -416,6 +474,7 @@ impl App {
             video: settings.video,
             video_limit: settings.video_limit,
             video_pieces: settings.video_pieces,
+            video_bar: settings.video_bar,
             sound: settings.sound,
             volume: settings.volume,
             volume_open: false,
@@ -665,10 +724,12 @@ impl App {
                         faded: None,
                         audio,
                         origin: (Duration::ZERO, 0),
+                        seeking: None,
+                        jump: None,
                     })));
                 }
                 // Not before a first frame.
-                Ok(VideoMsg::Cut(_)) => {}
+                Ok(VideoMsg::Cut(_) | VideoMsg::Seeked { .. }) => {}
                 Ok(VideoMsg::End) => up.prep = Prep::Failed("no frame".into()),
                 Ok(VideoMsg::Failed(e)) => up.prep = Prep::Failed(e),
                 Err(TryRecvError::Disconnected) => {
@@ -923,6 +984,7 @@ impl App {
             video: self.video,
             video_limit: self.video_limit,
             video_pieces: self.video_pieces,
+            video_bar: self.video_bar,
             caption: self.caption,
             aspect: self.aspect,
             layer: self.layer,
@@ -1005,6 +1067,7 @@ impl App {
                 }
                 self.drop_upcoming_video();
             }
+            Cmd::VideoBar => self.video_bar = !self.video_bar,
             Cmd::VideoPieces(n) => {
                 self.video_pieces = n;
                 self.drop_upcoming_video();
@@ -1395,8 +1458,36 @@ impl App {
             && self.current.is_some()
             && (on_speaker || ctx.is_being_dragged(slider_id) || (self.volume_open && in_zone));
         let on_sound = sound_fits && (on_speaker || self.volume_open);
+        // The seek bar of a video shown whole, above the buttons, between
+        // the corners (clear of the sound and its volume).
+        let bar_height = (radius * 0.8).clamp(10.0, 14.0);
+        let side = if sound_fits {
+            2.0 * radius + edge + 8.0
+        } else {
+            edge
+        };
+        let bar = Rect::from_min_max(
+            pos2(area.left() + side, y - radius - 8.0 - bar_height),
+            pos2(area.right() - side, y - radius - 8.0),
+        );
+        let bar_id = ui.id().with("seek");
+        let whole = self.video == VideoLength::Whole && self.video_limit == 0;
+        let progress = match &self.current {
+            Some(Slide {
+                content: Content::Video(p),
+                clock,
+                ..
+            }) if self.video_bar && whole && p.limit.is_none() => {
+                (p.progress(clock.elapsed())).zip(p.video.length())
+            }
+            _ => None,
+        };
+        let progress = progress.filter(|_| area.height() >= 110.0 && bar.width() >= 40.0);
+        let on_bar = progress.is_some()
+            && (pointer.is_some_and(|p| bar.expand(4.0).contains(p))
+                || ctx.is_being_dragged(bar_id));
 
-        let shown = hovering && (recent || on_sound) && self.current.is_some();
+        let shown = hovering && (recent || on_sound || on_bar) && self.current.is_some();
         let opacity = ctx.animate_bool_with_time(ui.id().with("controls"), shown, 0.2);
         // A video on the screen whose sound Windows cannot decode, with the
         // sound on: a warning triangle where the sound's button is, alone
@@ -1499,6 +1590,32 @@ impl App {
             }
             if forward.clicked() {
                 self.next();
+            }
+        }
+        if controls && let Some((share, length)) = progress {
+            let (response, chosen) = crate::ui::seek_bar(ui, bar_id, bar, share, opacity);
+            if let Some(share) = chosen
+                && let Some(Slide {
+                    content: Content::Video(playing),
+                    ..
+                }) = &mut self.current
+            {
+                playing.seek(share);
+            }
+            // The time under the pointer, and the length.
+            if let Some(p) = response.hover_pos().or(response.interact_pointer_pos()) {
+                let (left, right) = (
+                    bar.left() + bar.height() / 2.0,
+                    bar.right() - bar.height() / 2.0,
+                );
+                let at = ((p.x - left) / (right - left).max(1.0)).clamp(0.0, 1.0);
+                let secs = |units: f64| units / crate::media::SECOND as f64;
+                let text = format!(
+                    "{} / {}",
+                    crate::ui::clock_label(secs(f64::from(at) * length as f64)),
+                    crate::ui::clock_label(secs(length as f64))
+                );
+                paint_time(&painter, pos2(p.x, bar.top() - 4.0), area, &text, opacity);
             }
         }
 
@@ -1707,6 +1824,25 @@ fn paint_caption(painter: &egui::Painter, area: Rect, text: &str, opacity: f32, 
     painter.galley(rect.min + pad, galley, Color32::WHITE);
 }
 
+/// `text` (a time on the seek bar) on a dark band whose bottom is centred
+/// at `at`, kept inside `area`, at `opacity`.
+fn paint_time(painter: &egui::Painter, at: Pos2, area: Rect, text: &str, opacity: f32) {
+    let size = (area.height() * 0.045).clamp(11.0, 14.0);
+    let color = Color32::WHITE.gamma_multiply(opacity);
+    let galley = painter.layout_no_wrap(text.to_owned(), egui::FontId::proportional(size), color);
+    let pad = vec2(size * 0.45, size * 0.15);
+    let band = galley.size() + 2.0 * pad;
+    let left = area.left() + 4.0;
+    let x = (at.x - band.x / 2.0).clamp(left, (area.right() - 4.0 - band.x).max(left));
+    let rect = Rect::from_min_size(pos2(x, at.y - band.y), band);
+    painter.rect_filled(
+        rect,
+        size * 0.35,
+        Color32::from_black_alpha((160.0 * opacity) as u8),
+    );
+    painter.galley(rect.min + pad, galley, Color32::WHITE);
+}
+
 /// The longer side to decode a video at for a window whose longer side is
 /// `window` pixels, within `max`. Fitted whole, a video shows no longer
 /// than the window's longer side; filling it, it may be cut, and twice
@@ -1855,6 +1991,7 @@ impl eframe::App for App {
             video: self.video,
             video_limit: self.video_limit,
             video_pieces: self.video_pieces,
+            video_bar: self.video_bar,
             sound: self.sound,
             volume: self.volume,
             caption: self.caption,

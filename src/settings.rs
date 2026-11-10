@@ -25,6 +25,7 @@ const FIT: &str = "fit";
 const VIDEO: &str = "video";
 const VIDEO_LIMIT: &str = "video_limit";
 const VIDEO_PIECES: &str = "video_pieces";
+const VIDEO_BAR: &str = "video_bar";
 const SOUND: &str = "sound";
 const VOLUME: &str = "volume";
 const CAPTION: &str = "caption";
@@ -117,7 +118,9 @@ pub struct Settings {
     /// The pieces a video longer than its time is shown in (1 to
     /// `show::MAX_PIECES`; 1: its start only).
     pub video_pieces: u32,
-    /// Videos are heard (off by default), at olume (5 to 100).
+    /// A seek bar over a video shown whole, with the buttons.
+    pub video_bar: bool,
+    /// Videos are heard (off by default), at `volume` (5 to 100).
     pub sound: bool,
     pub volume: u32,
     pub caption: Caption,
@@ -151,6 +154,7 @@ impl Default for Settings {
             video: VideoLength::Whole,
             video_limit: 0,
             video_pieces: 1,
+            video_bar: false,
             sound: false,
             volume: 50,
             caption: Caption::NONE,
@@ -214,6 +218,7 @@ impl Settings {
                 .and_then(|v| v.parse().ok())
                 .filter(|n: &u32| (1..=crate::show::MAX_PIECES).contains(n))
                 .unwrap_or(d.video_pieces),
+            video_bar: flag(get(VIDEO_BAR).as_deref(), d.video_bar),
             sound: flag(get(SOUND).as_deref(), d.sound),
             volume: get(VOLUME)
                 .and_then(|v| v.parse().ok())
@@ -258,6 +263,7 @@ impl Settings {
         storage.set_string(VIDEO, self.video.name().into());
         storage.set_string(VIDEO_LIMIT, self.video_limit.to_string());
         storage.set_string(VIDEO_PIECES, self.video_pieces.to_string());
+        storage.set_string(VIDEO_BAR, self.video_bar.to_string());
         storage.set_string(SOUND, self.sound.to_string());
         storage.set_string(VOLUME, self.volume.to_string());
         storage.set_string(CAPTION, self.caption.name());
@@ -313,6 +319,7 @@ mod tests {
             video: VideoLength::Interval,
             video_limit: 120,
             video_pieces: 6,
+            video_bar: true,
             sound: true,
             volume: 35,
             caption: Caption::NONE
@@ -349,6 +356,7 @@ mod tests {
             (VIDEO, "muted"),
             (VIDEO_LIMIT, "-5"),
             (VIDEO_PIECES, "0"),
+            (VIDEO_BAR, "1"),
             (SOUND, "on"),
             (VOLUME, "0"),
             (CAPTION, "exif"),

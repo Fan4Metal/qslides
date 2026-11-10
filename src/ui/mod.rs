@@ -141,6 +141,65 @@ pub fn volume_slider(
     (chosen != value || !on).then_some(chosen)
 }
 
+/// A video's seek bar over the picture: a horizontal track in a dark pill
+/// of `rect`, at `opacity`, filled from the left to `share` (0 to 1), with
+/// a knob there, larger under the pointer. Its response, and the share
+/// pressed or dragged to, when the pointer was pressed or moved.
+pub fn seek_bar(
+    ui: &mut Ui,
+    id: egui::Id,
+    rect: egui::Rect,
+    share: f32,
+    opacity: f32,
+) -> (Response, Option<f32>) {
+    let response = ui.interact(rect, id, Sense::click_and_drag());
+    let painter = ui.painter();
+    let half = rect.height() / 2.0;
+    let active = response.hovered() || response.is_pointer_button_down_on();
+    let ground = if active { 180.0 } else { 140.0 };
+    painter.rect_filled(
+        rect,
+        half,
+        Color32::from_black_alpha((ground * opacity) as u8),
+    );
+    let (left, right, y) = (rect.left() + half, rect.right() - half, rect.center().y);
+    let at = left + (right - left) * share.clamp(0.0, 1.0);
+    let ink = Color32::from_white_alpha((235.0 * opacity) as u8);
+    let track = Color32::from_white_alpha((60.0 * opacity) as u8);
+    let width = (half * 0.3).clamp(2.0, 4.0);
+    painter.line_segment(
+        [egui::pos2(left, y), egui::pos2(right, y)],
+        egui::Stroke::new(width, track),
+    );
+    painter.line_segment(
+        [egui::pos2(left, y), egui::pos2(at, y)],
+        egui::Stroke::new(width, ink),
+    );
+    let knob = if active { half * 0.6 } else { half * 0.45 };
+    painter.circle_filled(egui::pos2(at, y), knob.max(3.0), ink);
+    // Pressed, or moved while held: a button held still asks for nothing
+    // more (each ask is a seek).
+    let moved = ui.input(|i| i.pointer.primary_pressed() || i.pointer.delta() != egui::Vec2::ZERO);
+    let chosen = if response.is_pointer_button_down_on() && moved {
+        let p = response.interact_pointer_pos();
+        p.map(|p| ((p.x - left) / (right - left).max(1.0)).clamp(0.0, 1.0))
+    } else {
+        None
+    };
+    (response, chosen)
+}
+
+/// "1:05", "12:40" or "1:02:03" for `secs` seconds.
+pub fn clock_label(secs: f64) -> String {
+    let s = secs.max(0.0) as u64;
+    let (h, m, s) = (s / 3600, s / 60 % 60, s % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
 /// A mark painted as a [`round_button`] that is not one (the pause in the
 /// corner): it takes no clicks, so a click, a double click or the right
 /// button on it goes to the widget under it, and it has no tip.
